@@ -1,0 +1,57 @@
+name: Publish Container Image to ECR
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  id-token: write
+  contents: read
+  security-events: write
+
+jobs:
+  build-and-push:
+    name: Build, Scan and Push Image
+    runs-on: ubuntu-latest
+
+    outputs:
+      image: ${{ steps.meta.outputs.tag }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Log in to ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set image tag
+        id: meta
+        run: |
+          SHA=$(echo "${{ github.sha }}" | cut -c1-8)
+          echo "tag=${{ steps.login-ecr.outputs.registry }}/${{ secrets.AWS_ECR_REPO }}:$SHA" >> $GITHUB_OUTPUT
+
+      - name: Build image
+        run: docker build -t ${{ steps.meta.outputs.tag }} .
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ steps.meta.outputs.tag }}
+          format: table
+          exit-code: '1'
+          severity: HIGH,CRITICAL
+          scanners: vuln
+
+      - name: Push image to ECR
+        if: github.event_name == 'push'
+        run: docker push ${{ steps.meta.outputs.tag }}

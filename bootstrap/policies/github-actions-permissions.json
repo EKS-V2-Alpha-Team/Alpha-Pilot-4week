@@ -1,0 +1,14 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:*", "ecr:*", "eks:*", "ec2:*", "iam:*", "sqs:*", "events:*",
+        "ssm:*", "secretsmanager:*", "kms:*", "rds:*", "route53:*",
+        "cloudwatch:*", "logs:*", "sts:*"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

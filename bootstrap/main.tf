@@ -8,25 +8,11 @@ resource "aws_s3_bucket" "terraform_state" {
 }
 
 resource "aws_s3_bucket_policy" "terraform_state_tls" {
-  bucket = aws_s3_bucket.terraform_state.id
-
+  bucket     = aws_s3_bucket.terraform_state.id
   depends_on = [aws_s3_bucket_public_access_block.terraform_state]
 
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Sid       = "DenyInsecureTransport"
-      Effect    = "Deny"
-      Principal = "*"
-      Action    = "s3:*"
-      Resource = [
-        aws_s3_bucket.terraform_state.arn,
-        "${aws_s3_bucket.terraform_state.arn}/*"
-      ]
-      Condition = {
-        Bool = { "aws:SecureTransport" = "false" }
-      }
-    }]
+  policy = templatefile("${path.module}/policies/s3-tls-deny.json", {
+    bucket_arn = aws_s3_bucket.terraform_state.arn
   })
 }
 
@@ -103,46 +89,12 @@ resource "aws_ecr_repository" "main" {
 
 resource "aws_ecr_lifecycle_policy" "main" {
   repository = aws_ecr_repository.main.name
-
-  policy = jsonencode({
-    rules = [
-      {
-        rulePriority = 1
-        description  = "Expire untagged images after 7 days"
-        selection = {
-          tagStatus   = "untagged"
-          countType   = "sinceImagePushed"
-          countUnit   = "days"
-          countNumber = 7
-        }
-        action = {
-          type = "expire"
-        }
-      },
-      {
-        rulePriority = 2
-        description  = "Keep only the 40 most recent images"
-        selection = {
-          tagStatus   = "any"
-          countType   = "imageCountMoreThan"
-          countNumber = 40
-        }
-        action = {
-          type = "expire"
-        }
-      }
-    ]
-  })
+  policy     = file("${path.module}/policies/ecr-lifecycle.json")
 }
 
 resource "aws_iam_openid_connect_provider" "github" {
   url            = "https://token.actions.githubusercontent.com"
   client_id_list = ["sts.amazonaws.com"]
-
-  thumbprint_list = [
-    "6938fd4d98bab83faadb97b34396831e3780aea1", # GitHub's current thumbprint
-    "1c58a3a8518e8759bf075b76b750d4f2df264fcd"  # GitHub's backup thumbprint
-  ]
 
   tags = {
     Name = "${var.project_name}-github-oidc-provider"
@@ -152,21 +104,10 @@ resource "aws_iam_openid_connect_provider" "github" {
 resource "aws_iam_role" "github_actions" {
   name = "${var.project_name}-${var.environment}-github-actions-role"
 
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect    = "Allow"
-      Principal = { Federated = aws_iam_openid_connect_provider.github.arn }
-      Action    = "sts:AssumeRoleWithWebIdentity"
-      Condition = {
-        StringEquals = {
-          "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
-        }
-        StringLike = {
-          "token.actions.githubusercontent.com:sub" = "repo:${var.github_org}/${var.github_repo}:*"
-        }
-      }
-    }]
+  assume_role_policy = templatefile("${path.module}/policies/github-actions-trust.json", {
+    oidc_provider_arn = aws_iam_openid_connect_provider.github.arn
+    github_org        = var.github_org
+    github_repo       = var.github_repo
   })
 
   tags = {
@@ -174,32 +115,8 @@ resource "aws_iam_role" "github_actions" {
   }
 }
 
-data "aws_iam_policy_document" "github_actions" {
-  statement {
-    effect = "Allow"
-    actions = [
-      "s3:*",
-      "ecr:*",
-      "eks:*",
-      "ec2:*",
-      "iam:*",
-      "sqs:*",
-      "events:*",
-      "ssm:*",
-      "secretsmanager:*",
-      "kms:*",
-      "rds:*",
-      "route53:*",
-      "cloudwatch:*",
-      "logs:*",
-      "sts:*",
-    ]
-    resources = ["*"]
-  }
-}
-
 resource "aws_iam_role_policy" "github_actions" {
   name   = "${var.project_name}-${var.environment}-github-actions-policy"
   role   = aws_iam_role.github_actions.id
-  policy = data.aws_iam_policy_document.github_actions.json
+  policy = file("${path.module}/policies/github-actions-permissions.json")
 }

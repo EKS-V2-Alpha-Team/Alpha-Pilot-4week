@@ -1,3 +1,20 @@
+x-database-env: &database-env
+  DATABASE_URL: postgres://app:localdev@postgres:5432/orders?sslmode=disable
+
+x-floci-env: &floci-env
+  SQS_QUEUE_URL: http://floci:4566/000000000000/order-events
+  AWS_ENDPOINT_URL: http://floci:4566
+  AWS_REGION: us-east-1
+  AWS_ACCESS_KEY_ID: test
+  AWS_SECRET_ACCESS_KEY: test
+
+x-service-urls: &service-urls
+  ORDER_SERVICE_URL: http://order-service:8081
+  INVENTORY_SERVICE_URL: http://inventory-service:8082
+  PAYMENT_SERVICE_URL: http://payment-service:8083
+  NOTIFICATION_SERVICE_URL: http://notification-service:8084
+  SHIPPING_SERVICE_URL: http://shipping-service:8085
+
 services:
   postgres:
     image: postgres:16
@@ -15,29 +32,23 @@ services:
     ports:
       - "6379:6379"
 
-  localstack:
-    image: localstack/localstack:3
+  floci:
+    image: floci/floci:2.1.0-compat
     ports:
       - "4566:4566"
     environment:
-      SERVICES: sqs
-      DEFAULT_REGION: us-east-1
-      AWS_DEFAULT_REGION: us-east-1
+      FLOCI_HOSTNAME: floci
     volumes:
-      - ./scripts/localstack-init.sh:/etc/localstack/init/ready.d/init.sh
+      - ./scripts/floci-init.sh:/etc/floci/init/ready.d/init.sh:ro
 
   api-gateway:
     build: ./services/api-gateway
     ports:
       - "8080:8080"
     environment:
+      <<: *service-urls
       REDIS_URL: redis://redis:6379
       JWT_SECRET: local-dev-secret
-      ORDER_SERVICE_URL: http://order-service:8081
-      INVENTORY_SERVICE_URL: http://inventory-service:8082
-      PAYMENT_SERVICE_URL: http://payment-service:8083
-      NOTIFICATION_SERVICE_URL: http://notification-service:8084
-      SHIPPING_SERVICE_URL: http://shipping-service:8085
       DASHBOARD_SERVICE_URL: http://dashboard-api:8086
     depends_on:
       - redis
@@ -47,22 +58,17 @@ services:
     ports:
       - "8081:8081"
     environment:
-      DATABASE_URL: postgres://app:localdev@postgres:5432/orders?sslmode=disable
-      SQS_QUEUE_URL: http://localstack:4566/000000000000/order-events
-      AWS_ENDPOINT_URL: http://localstack:4566
-      AWS_REGION: us-east-1
-      AWS_ACCESS_KEY_ID: test
-      AWS_SECRET_ACCESS_KEY: test
+      <<: [*database-env, *floci-env]
     depends_on:
       - postgres
-      - localstack
+      - floci
 
   inventory-service:
     build: ./services/inventory-service
     ports:
       - "8082:8082"
     environment:
-      DATABASE_URL: postgres://app:localdev@postgres:5432/orders?sslmode=disable
+      <<: *database-env
     depends_on:
       - postgres
 
@@ -71,22 +77,17 @@ services:
     ports:
       - "8083:8083"
     environment:
-      DATABASE_URL: postgres://app:localdev@postgres:5432/orders?sslmode=disable
-      SQS_QUEUE_URL: http://localstack:4566/000000000000/order-events
-      AWS_ENDPOINT_URL: http://localstack:4566
-      AWS_REGION: us-east-1
-      AWS_ACCESS_KEY_ID: test
-      AWS_SECRET_ACCESS_KEY: test
+      <<: [*database-env, *floci-env]
     depends_on:
       - postgres
-      - localstack
+      - floci
 
   notification-service:
     build: ./services/notification-service
     ports:
       - "8084:8084"
     environment:
-      DATABASE_URL: postgres://app:localdev@postgres:5432/orders?sslmode=disable
+      <<: *database-env
     depends_on:
       - postgres
 
@@ -95,36 +96,22 @@ services:
     ports:
       - "8085:8085"
     environment:
-      DATABASE_URL: postgres://app:localdev@postgres:5432/orders?sslmode=disable
-      SQS_QUEUE_URL: http://localstack:4566/000000000000/order-events
-      AWS_ENDPOINT_URL: http://localstack:4566
-      AWS_REGION: us-east-1
-      AWS_ACCESS_KEY_ID: test
-      AWS_SECRET_ACCESS_KEY: test
+      <<: [*database-env, *floci-env]
     depends_on:
       - postgres
-      - localstack
+      - floci
 
   worker:
     build: ./services/worker
     environment:
-      SQS_QUEUE_URL: http://localstack:4566/000000000000/order-events
-      AWS_ENDPOINT_URL: http://localstack:4566
-      AWS_REGION: us-east-1
-      AWS_ACCESS_KEY_ID: test
-      AWS_SECRET_ACCESS_KEY: test
-      ORDER_SERVICE_URL: http://order-service:8081
-      INVENTORY_SERVICE_URL: http://inventory-service:8082
-      PAYMENT_SERVICE_URL: http://payment-service:8083
-      NOTIFICATION_SERVICE_URL: http://notification-service:8084
-      SHIPPING_SERVICE_URL: http://shipping-service:8085
+      <<: [*floci-env, *service-urls]
     depends_on:
-      - localstack
+      - floci
 
   scheduler:
     build: ./services/scheduler
     environment:
-      DATABASE_URL: postgres://app:localdev@postgres:5432/orders?sslmode=disable
+      <<: *database-env
     depends_on:
       - postgres
 
@@ -133,7 +120,7 @@ services:
     ports:
       - "8086:8086"
     environment:
-      DATABASE_URL: postgres://app:localdev@postgres:5432/orders?sslmode=disable
+      <<: *database-env
     depends_on:
       - postgres
 

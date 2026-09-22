@@ -1,0 +1,42 @@
+name: Terraform Apply
+on:
+  push:
+    branches:
+      - main
+env:
+    AWS_REGION: ${{ vars.AWS_REGION }}
+    TF_WORKING_DIR: infra/terraform 
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+    terraform-apply:
+        runs-on: ubuntu-latest
+
+        defaults:
+            run:
+                working-directory: ${{ env.TF_WORKING_DIR }}
+
+        steps:
+         - name: Checkout repository
+           uses: actions/checkout@v7
+
+         - name: Configure AWS credentials
+           uses: aws-actions/configure-aws-credentials@v5
+           with:
+             aws-region: ${{ env.AWS_REGION }}
+             role-to-assume: ${{ secrets.AWS_GITHUB_OIDC_ROLE }}
+
+         - name: Setup Terraform
+           uses: hashicorp/setup-terraform@v4
+
+         - name: Initialize Terraform
+           run: terraform init
+
+         - name: Validate Terraform
+           run: terraform validate
+
+         - name: Terraform Apply
+           run: terraform apply -auto-approve tfplan

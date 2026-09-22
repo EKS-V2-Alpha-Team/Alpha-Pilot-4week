@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - "terraform/**"
+      - "infra/terraform/**"
 
 permissions:
   id-token: write

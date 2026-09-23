@@ -15,6 +15,7 @@ env:
 permissions:
   id-token: write
   contents: read
+  actions: read
 
 jobs:
     terraform-apply:
@@ -32,7 +33,7 @@ jobs:
            uses: aws-actions/configure-aws-credentials@v5
            with:
              aws-region: ${{ env.AWS_REGION }}
-             role-to-assume: ${{ secrets.AWS_GITHUB_OIDC_ROLE }}
+             role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
 
          - name: Setup Terraform
            uses: hashicorp/setup-terraform@v4
@@ -40,8 +41,12 @@ jobs:
          - name: Initialize Terraform
            run: terraform init
 
-         - name: Validate Terraform
-           run: terraform validate
+         - name: Download Terraform Plan
+           uses: actions/download-artifact@v4
+           with:
+              name: tfplan
+              run-id: ${{ inputs.terraform_plan_run_id }}
+              path: infra/terraform
 
          - name: Terraform Apply
-           run: terraform apply -auto-approve tfplan
+           run: terraform apply tfplan

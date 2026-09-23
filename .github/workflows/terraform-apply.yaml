@@ -41,7 +41,6 @@ jobs:
            with:
               terraform_version: ${{ env.TF_VERSION }}
 
-
          - name: Initialize Terraform
            run: terraform init
 

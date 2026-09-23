@@ -21,6 +21,7 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v6
+        fetch-depth: 0
 
       - name: Generate path filters from services directory
         id: gen-filters

@@ -10,7 +10,8 @@ on:
 
 env:
     AWS_REGION: ${{ vars.AWS_REGION }}
-    TF_WORKING_DIR: infra/terraform 
+    TF_WORKING_DIR: infra/terraform
+    TF_VERSION: "1.16.3"
 
 permissions:
   id-token: write
@@ -37,6 +38,9 @@ jobs:
 
          - name: Setup Terraform
            uses: hashicorp/setup-terraform@v4
+           with:
+              terraform_version: ${{ env.TF_VERSION }}
+
 
          - name: Initialize Terraform
            run: terraform init
@@ -50,4 +54,4 @@ jobs:
               github-token: ${{ secrets.GITHUB_TOKEN }}
 
          - name: Terraform Apply
-           run: terraform apply tfplan
+           run: terraform apply tfplan.binary

@@ -1,4 +1,4 @@
-name: Publish Container Image to ECR
+name: Application Pipeline
 
 on:
   push:
@@ -13,16 +13,50 @@ permissions:
   security-events: write
 
 jobs:
+  detect-changes:
+    name: Detect Changed Services
+    runs-on: ubuntu-latest
+    outputs:
+      services: ${{ steps.filter.outputs.changes }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+
+      - name: Generate path filters from services directory
+        id: gen-filters
+        run: |
+          {
+            echo "filters<<EOF"
+            for dir in services/*/; do
+              name=$(basename "$dir")
+              echo "${name}: 'services/${name}/**'"
+            done
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Filter changed paths
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: ${{ steps.gen-filters.outputs.filters }}
+          list-files: json
+
   build-and-push:
     name: Build, Scan and Push Image
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.services != '[]' }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJSON(needs.detect-changes.outputs.services) }}
 
     outputs:
       image: ${{ steps.meta.outputs.tag }}
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v5
@@ -38,10 +72,10 @@ jobs:
         id: meta
         run: |
           SHA=$(echo "${{ github.sha }}" | cut -c1-8)
-          echo "tag=${{ steps.login-ecr.outputs.registry }}/${{ secrets.AWS_ECR_REPO }}:$SHA" >> $GITHUB_OUTPUT
+          echo "tag=${{ steps.login-ecr.outputs.registry }}/${{ secrets.AWS_ECR_REPO }}:${{ matrix.service }}-$SHA" >> $GITHUB_OUTPUT
 
       - name: Build image
-        run: docker build -t ${{ steps.meta.outputs.tag }} .
+        run: docker build -t ${{ steps.meta.outputs.tag }} ./services/${{ matrix.service }}
 
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@v0.36.0

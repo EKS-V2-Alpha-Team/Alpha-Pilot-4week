@@ -19,7 +19,7 @@ jobs:
 
     defaults:
       run:
-        working-directory: ./terraform
+        working-directory: ./infra/terraform
 
     env:
       TF_VERSION: "1.16.3"
@@ -44,11 +44,11 @@ jobs:
           echo "Initialising terraform..."
           terraform init
 
-      - name: Terraform Format 
-        run: | 
-          echo "Running terraform formate..."
+      - name: Terraform Format
+        run: |
+          echo "Running terraform fmt check..."
           terraform fmt -check -recursive
-          
+
       - name: Terraform Validate
         run: |
           echo "Running terraform validate..."
@@ -58,7 +58,7 @@ jobs:
         uses: bridgecrewio/checkov-action@v12.1347.0
         continue-on-error: true
         with:
-          framework: terraform 
+          framework: terraform
           output_format: cli
 
       - name: Terraform Plan
@@ -70,7 +70,7 @@ jobs:
         uses: actions/upload-artifact@v7.0.1
         with:
           name: tfplan
-          path: terraform/tfplan.binary
+          path: infra/terraform/tfplan.binary
           retention-days: 5
 
       - name: Post plan comment
@@ -78,6 +78,5 @@ jobs:
         with:
           token: ${{ github.token }}
           planfile: tfplan.binary
-          working-directory: ./terraform
+          working-directory: ./infra/terraform
           header: terraform plan
-           

@@ -1,8 +1,13 @@
 name: Terraform Apply
+
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
+    inputs:
+      terraform_plan_run_id:
+        description: "Run ID of the Terraform plan to apply"
+        required: true
+        type: string
+
 env:
     AWS_REGION: ${{ vars.AWS_REGION }}
     TF_WORKING_DIR: infra/terraform 

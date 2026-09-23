@@ -47,6 +47,7 @@ jobs:
               name: tfplan
               run-id: ${{ inputs.terraform_plan_run_id }}
               path: infra/terraform
+              github-token: ${{ secrets.GITHUB_TOKEN }}
 
          - name: Terraform Apply
            run: terraform apply tfplan

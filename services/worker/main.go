@@ -146,7 +146,7 @@ type newOrder struct {
 	} `json:"items"`
 }
 
-// processNewOrder takes a new order through reserve -> charge -> confirm.
+// processNewOrder takes a new order through reserve -> charge -> confirm -> commit stock.
 //
 // Out of stock or a declined card is a final answer: undo what was done, cancel the
 // order and return nil so the message is deleted. Anything else returns an error so
@@ -197,7 +197,22 @@ func processNewOrder(client *http.Client, services map[string]string, o newOrder
 		return fmt.Errorf("charge: unexpected status %d", code)
 	}
 
-	return setOrderStatus(client, services, o.OrderID, "confirmed")
+	if err := setOrderStatus(client, services, o.OrderID, "confirmed"); err != nil {
+		return err
+	}
+
+	// Turn the held stock into a sale (ALPHA-77). Only after the confirm, so stock never
+	// leaves the shelf for an order that isn't confirmed.
+	code, err = sendJSON(client, http.MethodPost, services["inventory"]+"/commit", map[string]interface{}{
+		"order_id": o.OrderID,
+	})
+	if err != nil {
+		return fmt.Errorf("commit stock: %w", err)
+	}
+	if code != http.StatusOK {
+		return fmt.Errorf("commit stock: unexpected status %d", code)
+	}
+	return nil
 }
 
 func setOrderStatus(client *http.Client, services map[string]string, orderID int, status string) error {

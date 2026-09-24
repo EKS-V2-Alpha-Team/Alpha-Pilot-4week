@@ -79,7 +79,7 @@ func TestNewOrderIsReservedChargedAndConfirmed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("got error %v, want nil (message deleted)", err)
 	}
-	assertCalls(t, calls, []string{"POST /reserve", "POST /charge", "PUT /status confirmed"})
+	assertCalls(t, calls, []string{"POST /reserve", "POST /charge", "PUT /status confirmed", "POST /commit"})
 }
 
 func TestRepeatedOrderCreatedStillConfirms(t *testing.T) {
@@ -88,7 +88,7 @@ func TestRepeatedOrderCreatedStillConfirms(t *testing.T) {
 	if err != nil {
 		t.Fatalf("got error %v, want nil", err)
 	}
-	assertCalls(t, calls, []string{"POST /reserve", "POST /charge", "PUT /status confirmed"})
+	assertCalls(t, calls, []string{"POST /reserve", "POST /charge", "PUT /status confirmed", "POST /commit"})
 }
 
 func TestOutOfStockCancelsWithoutCharging(t *testing.T) {
@@ -121,6 +121,14 @@ func TestInventoryUnreachableKeepsMessageForRetry(t *testing.T) {
 	if err := handleEvent(&http.Client{Timeout: time.Second}, services, orderCreated(t)); err == nil {
 		t.Fatal("got nil, want an error so the message stays on the queue")
 	}
+}
+
+func TestCommitFailureKeepsMessageForRetry(t *testing.T) {
+	calls, err := run(t, map[string]int{"/reserve": 201, "/charge": 201, "/commit": 500}, orderCreated(t))
+	if err == nil {
+		t.Fatal("got nil, want an error so the message stays on the queue")
+	}
+	assertCalls(t, calls, []string{"POST /reserve", "POST /charge", "PUT /status confirmed", "POST /commit"})
 }
 
 func TestEventsWithoutHandlerAreSkipped(t *testing.T) {

@@ -27,5 +27,6 @@ module "pod-identity" {
 module "secrets_manager" {
   source = "./modules/secrets-manager"
 
+  project_name = var.project_name
+  environment  = var.environment
 }
-

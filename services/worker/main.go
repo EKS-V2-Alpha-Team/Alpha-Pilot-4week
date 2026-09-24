@@ -1,26 +1,35 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 )
 
-// Event represents a message from SQS
+// Event is the envelope order-service publishes (see order-service outbox.go).
 type Event struct {
-	Type      string                 `json:"type"`
-	Payload   map[string]interface{} `json:"payload"`
-	Timestamp string                 `json:"timestamp"`
+	ID        string          `json:"id"`
+	Type      string          `json:"type"`
+	Payload   json.RawMessage `json:"payload"`
+	Timestamp string          `json:"timestamp"`
 }
 
 func main() {
-	sqsQueue := os.Getenv("SQS_QUEUE_URL")
-	if sqsQueue == "" {
+	sqsQueueURL := os.Getenv("SQS_QUEUE_URL")
+	if sqsQueueURL == "" {
 		log.Fatal("SQS_QUEUE_URL is required")
 	}
 
@@ -35,6 +44,13 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// Region, credentials and AWS_ENDPOINT_URL (Floci locally) come from the standard AWS env vars.
+	awsCfg, err := config.LoadDefaultConfig(ctx)
+	if err != nil {
+		log.Fatalf("load AWS config: %v", err)
+	}
+	queue := &sqsQueue{client: sqs.NewFromConfig(awsCfg), url: sqsQueueURL}
 
 	// Health check endpoint
 	go func() {
@@ -59,131 +75,193 @@ func main() {
 	}()
 
 	log.Println("Worker started, polling SQS for events...")
-	pollAndProcess(ctx, sqsQueue, services)
+	pollAndProcess(ctx, queue, services)
 }
 
-func pollAndProcess(ctx context.Context, queueURL string, services map[string]string) {
+func pollAndProcess(ctx context.Context, queue *sqsQueue, services map[string]string) {
 	client := &http.Client{Timeout: 10 * time.Second}
 
-	for {
-		select {
-		case <-ctx.Done():
-			log.Println("Worker stopped")
-			return
-		default:
-			messages := receiveSQSMessages(ctx, queueURL)
-
-			for _, raw := range messages {
-				var event Event
-				if err := json.Unmarshal([]byte(raw), &event); err != nil {
-					log.Printf("Failed to parse event: %v", err)
-					continue
-				}
-
-				log.Printf("Processing event: %s", event.Type)
-
-				if err := handleEvent(client, services, event); err != nil {
-					log.Printf("Failed to handle event %s: %v", event.Type, err)
-					// In production: don't delete from SQS, let it retry or go to DLQ
-					continue
-				}
-
-				log.Printf("Successfully processed: %s", event.Type)
-				// Delete message from SQS after successful processing
-			}
-
-			if len(messages) == 0 {
+	for ctx.Err() == nil {
+		messages, err := queue.receive(ctx)
+		if err != nil {
+			if ctx.Err() == nil {
+				log.Printf("Receive failed: %v", err)
 				time.Sleep(5 * time.Second)
 			}
+			continue
+		}
+
+		for _, msg := range messages {
+			var event Event
+			if err := json.Unmarshal([]byte(aws.ToString(msg.Body)), &event); err != nil {
+				// Left on the queue: after 3 receives SQS moves it to the DLQ.
+				log.Printf("Failed to parse message %s: %v", aws.ToString(msg.MessageId), err)
+				continue
+			}
+
+			log.Printf("Processing event %s (%s)", event.Type, event.ID)
+
+			if err := handleEvent(client, services, event); err != nil {
+				// Not deleted: SQS hands it out again after the visibility timeout
+				// and moves it to the DLQ after 3 receives.
+				log.Printf("Failed to handle event %s (%s): %v", event.Type, event.ID, err)
+				continue
+			}
+
+			if err := queue.delete(ctx, msg.ReceiptHandle); err != nil {
+				// Handled but not deleted: it comes back, which is safe because reserve,
+				// charge and status changes can be repeated (ALPHA-51).
+				log.Printf("Failed to delete event %s (%s): %v", event.Type, event.ID, err)
+				continue
+			}
+			log.Printf("Done: %s (%s)", event.Type, event.ID)
 		}
 	}
+	log.Println("Worker stopped")
 }
 
 func handleEvent(client *http.Client, services map[string]string, event Event) error {
 	switch event.Type {
-
 	case "order.created":
-		// 1. Reserve inventory
-		log.Printf("  -> Reserving inventory for order")
-		// POST to inventory-service/reserve with order items
-		// If reservation fails, update order status to "cancelled"
-
-		// 2. Process payment
-		log.Printf("  -> Processing payment")
-		// POST to payment-service/charge
-		// If payment fails, release inventory reservation
-
-		// 3. Send confirmation notification
-		log.Printf("  -> Sending order confirmation")
-		// POST to notification-service/send with order_confirmed template
-
-		// 4. Update order to confirmed
-		log.Printf("  -> Confirming order")
-		// PUT to order-service/status with new_status: "confirmed"
-
-	case "order.status_changed":
-		newStatus, _ := event.Payload["new_status"].(string)
-
-		switch newStatus {
-		case "processing":
-			// Create shipment
-			log.Printf("  -> Creating shipment for order")
-			// POST to shipping-service/shipments
-
-		case "shipped":
-			// Notify customer
-			log.Printf("  -> Sending shipping notification")
-			// POST to notification-service/send with order_shipped template
-
-		case "delivered":
-			log.Printf("  -> Sending delivery notification")
-			// POST to notification-service/send with order_delivered template
-
-		case "cancelled":
-			// Release inventory
-			log.Printf("  -> Releasing inventory reservation")
-			// POST to inventory-service/release
-
-			// Process refund if payment was made
-			log.Printf("  -> Processing refund")
-			// POST to payment-service/refund
+		var order newOrder
+		if err := json.Unmarshal(event.Payload, &order); err != nil {
+			return fmt.Errorf("bad order.created payload: %w", err)
 		}
-
-	case "payment.completed":
-		log.Printf("  -> Payment successful, confirming order")
-		// Update order status to confirmed
-
-	case "payment.failed":
-		log.Printf("  -> Payment failed, cancelling order")
-		// Release inventory reservation
-		// Update order status to cancelled
-		// Send payment failed notification
-
-	case "shipment.created":
-		log.Printf("  -> Shipment created, updating order to processing")
-		// Update order status
-
-	case "shipment.delivered":
-		log.Printf("  -> Shipment delivered, updating order")
-		// Update order status to delivered
-		// Send delivery notification
-
+		return processNewOrder(client, services, order)
 	default:
-		log.Printf("  -> Unknown event type: %s (skipping)", event.Type)
+		// No handler yet (ALPHA-78). Deleted so these don't fill the DLQ.
+		log.Printf("  -> no handler for %s yet, skipping", event.Type)
+		return nil
+	}
+}
+
+type newOrder struct {
+	OrderID    int     `json:"order_id"`
+	CustomerID string  `json:"customer_id"`
+	Total      float64 `json:"total"`
+	Currency   string  `json:"currency"`
+	Items      []struct {
+		ProductID string `json:"product_id"`
+		Quantity  int    `json:"quantity"`
+	} `json:"items"`
+}
+
+// processNewOrder takes a new order through reserve -> charge -> confirm.
+//
+// Out of stock or a declined card is a final answer: undo what was done, cancel the
+// order and return nil so the message is deleted. Anything else returns an error so
+// SQS retries it. Every call is safe to repeat (ALPHA-51), so a retry after a partial
+// run picks up where it left off.
+func processNewOrder(client *http.Client, services map[string]string, o newOrder) error {
+	code, err := sendJSON(client, http.MethodPost, services["inventory"]+"/reserve", map[string]interface{}{
+		"order_id": o.OrderID,
+		"items":    o.Items,
+	})
+	if err != nil {
+		return fmt.Errorf("reserve: %w", err)
+	}
+	switch code {
+	case http.StatusCreated, http.StatusOK:
+	case http.StatusConflict, http.StatusNotFound:
+		log.Printf("  -> order %d: not enough stock, cancelling", o.OrderID)
+		return setOrderStatus(client, services, o.OrderID, "cancelled")
+	default:
+		return fmt.Errorf("reserve: unexpected status %d", code)
 	}
 
-	_ = client
-	_ = services
+	code, err = sendJSON(client, http.MethodPost, services["payment"]+"/charge", map[string]interface{}{
+		"order_id":    o.OrderID,
+		"customer_id": o.CustomerID,
+		"amount":      o.Total,
+		"currency":    o.Currency,
+		"method":      "card",
+	})
+	if err != nil {
+		return fmt.Errorf("charge: %w", err)
+	}
+	switch code {
+	case http.StatusCreated, http.StatusOK:
+	case http.StatusPaymentRequired:
+		log.Printf("  -> order %d: payment declined, releasing stock and cancelling", o.OrderID)
+		code, err := sendJSON(client, http.MethodPost, services["inventory"]+"/release", map[string]interface{}{
+			"order_id": o.OrderID,
+		})
+		if err != nil {
+			return fmt.Errorf("release after decline: %w", err)
+		}
+		if code != http.StatusOK {
+			return fmt.Errorf("release after decline: unexpected status %d", code)
+		}
+		return setOrderStatus(client, services, o.OrderID, "cancelled")
+	default:
+		return fmt.Errorf("charge: unexpected status %d", code)
+	}
+
+	return setOrderStatus(client, services, o.OrderID, "confirmed")
+}
+
+func setOrderStatus(client *http.Client, services map[string]string, orderID int, status string) error {
+	code, err := sendJSON(client, http.MethodPut, services["order"]+"/status", map[string]interface{}{
+		"order_id":   orderID,
+		"new_status": status,
+	})
+	if err != nil {
+		return fmt.Errorf("set status %s: %w", status, err)
+	}
+	if code != http.StatusOK {
+		return fmt.Errorf("set status %s: unexpected status %d", status, code)
+	}
 	return nil
 }
 
-func receiveSQSMessages(ctx context.Context, queueURL string) []string {
-	// Students implement with AWS SDK SQS ReceiveMessage
-	// Use long polling: WaitTimeSeconds = 20
-	// MaxNumberOfMessages = 10
-	// Honour ctx during the long-poll so SIGTERM unblocks cleanly
-	_ = ctx
-	return nil
+// sendJSON sends body as JSON and returns the response status code.
+func sendJSON(client *http.Client, method, url string, body interface{}) (int, error) {
+	b, err := json.Marshal(body)
+	if err != nil {
+		return 0, err
+	}
+	req, err := http.NewRequest(method, url, bytes.NewReader(b))
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	return resp.StatusCode, nil
+}
+
+type sqsQueue struct {
+	client *sqs.Client
+	url    string
+}
+
+// receive long-polls for up to 10 messages. It returns early when ctx is cancelled,
+// so SIGTERM doesn't wait out the 20 s poll.
+func (q *sqsQueue) receive(ctx context.Context) ([]types.Message, error) {
+	out, err := q.client.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
+		QueueUrl:            aws.String(q.url),
+		MaxNumberOfMessages: 10,
+		WaitTimeSeconds:     20,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out.Messages, nil
+}
+
+func (q *sqsQueue) delete(ctx context.Context, receiptHandle *string) error {
+	// Finish the delete even if shutdown started while the message was being handled.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	_, err := q.client.DeleteMessage(ctx, &sqs.DeleteMessageInput{
+		QueueUrl:      aws.String(q.url),
+		ReceiptHandle: receiptHandle,
+	})
+	return err
 }
 
 func getEnv(key, fallback string) string {

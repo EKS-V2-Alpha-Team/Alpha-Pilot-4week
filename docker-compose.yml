@@ -68,6 +68,7 @@ services:
     build: ./services/inventory-service
     ports:
       - "8082:8082"
+      - "9092:9090"   # Prometheus metrics (separate port, not routed by api-gateway)
     environment:
       <<: *database-env
       PGAPPNAME: inventory-service

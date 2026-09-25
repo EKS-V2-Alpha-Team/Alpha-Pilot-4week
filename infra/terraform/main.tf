@@ -9,9 +9,12 @@ module "vpc" {
   db_subnet_cidrs      = var.db_subnet_cidrs
 }
 
-module "eks-cluster" {
-  source = "./modules/eks-cluster"
+module "eks" {
+  source = "./modules/eks"
 
+  project_name                 = var.project_name
+  private_subnet_ids           = module.vpc.private_subnet_ids
+  cluster_admin_principal_arns = var.cluster_admin_principal_arns
 }
 
 module "karpenter" {

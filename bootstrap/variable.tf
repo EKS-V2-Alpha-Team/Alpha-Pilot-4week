@@ -19,7 +19,7 @@ variable "environment" {
 variable "github_org" {
   description = "GitHub organisation or username"
   type        = string
-  default     = "Jawwad78"
+  default     = "EKS-V2-Alpha-Team"
 }
 
 variable "github_repo" {

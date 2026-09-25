@@ -11,6 +11,7 @@ permissions:
   id-token: write
   contents: read
   security-events: write
+  pull-requests: read
 
 jobs:
   detect-changes:
@@ -21,7 +22,8 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v6
-        fetch-depth: 0
+        with:
+          fetch-depth: 0
 
       - name: Generate path filters from services directory
         id: gen-filters
@@ -83,7 +85,7 @@ jobs:
         with:
           image-ref: ${{ steps.meta.outputs.tag }}
           format: table
-          exit-code: '1'
+          exit-code: "1"
           severity: HIGH,CRITICAL
           scanners: vuln
 

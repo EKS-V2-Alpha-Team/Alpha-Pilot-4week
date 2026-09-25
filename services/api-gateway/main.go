@@ -37,6 +37,8 @@ func main() {
 		"/api/notifications": getEnv("NOTIFICATION_SERVICE_URL", "http://notification-service:8084"),
 		"/api/shipping":      getEnv("SHIPPING_SERVICE_URL", "http://shipping-service:8085"),
 		"/api/dashboard":     getEnv("DASHBOARD_SERVICE_URL", "http://dashboard-api:8086"),
+		// The dashboard page calls /dashboard/* on the gateway's own origin.
+		"/dashboard/": getEnv("DASHBOARD_SERVICE_URL", "http://dashboard-api:8086"),
 	}
 
 	// Redis for rate limiting
@@ -199,35 +201,52 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 	// Find matching route
 	for prefix, targetURL := range routes {
 		if strings.HasPrefix(r.URL.Path, prefix) {
-			target, err := url.Parse(targetURL)
-			if err != nil {
-				httpError(w, "bad upstream config", http.StatusInternalServerError)
-				return
+			// Strip the route prefix for downstream. dashboard-api serves /dashboard/*
+			// under that exact path, so that route keeps it.
+			if prefix != "/dashboard/" {
+				r.URL.Path = strings.TrimPrefix(r.URL.Path, prefix)
+				if r.URL.Path == "" {
+					r.URL.Path = "/"
+				}
 			}
-
-			proxy := httputil.NewSingleHostReverseProxy(target)
-			proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-				log.Printf("Proxy error: %v", err)
-				httpError(w, "service unavailable", http.StatusBadGateway)
-			}
-
-			// Strip the route prefix for downstream
-			r.URL.Path = strings.TrimPrefix(r.URL.Path, prefix)
-			if r.URL.Path == "" {
-				r.URL.Path = "/"
-			}
-			r.Header.Set("X-Forwarded-For", r.RemoteAddr)
-			r.Header.Set("X-Request-ID", fmt.Sprintf("%d", time.Now().UnixNano()))
-
-			proxy.ServeHTTP(w, r)
+			forward(w, r, targetURL)
 			return
 		}
+	}
+
+	// The dashboard page itself, served by dashboard-api at "/".
+	if r.URL.Path == "/" {
+		forward(w, r, routes["/dashboard/"])
+		return
 	}
 
 	httpError(w, "not found", http.StatusNotFound)
 }
 
+func forward(w http.ResponseWriter, r *http.Request, targetURL string) {
+	target, err := url.Parse(targetURL)
+	if err != nil {
+		httpError(w, "bad upstream config", http.StatusInternalServerError)
+		return
+	}
+
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+		log.Printf("Proxy error: %v", err)
+		httpError(w, "service unavailable", http.StatusBadGateway)
+	}
+
+	r.Header.Set("X-Forwarded-For", r.RemoteAddr)
+	r.Header.Set("X-Request-ID", fmt.Sprintf("%d", time.Now().UnixNano()))
+
+	proxy.ServeHTTP(w, r)
+}
+
 func isPublicPath(path string) bool {
+	// The dashboard page is static HTML; its data calls still need a token.
+	if path == "/" {
+		return true
+	}
 	public := []string{"/healthz", "/auth/", "/api/shipping/webhook"}
 	for _, p := range public {
 		if strings.HasPrefix(path, p) {

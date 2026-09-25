@@ -153,6 +153,26 @@ type newOrder struct {
 // SQS retries it. Every call is safe to repeat (ALPHA-51), so a retry after a partial
 // run picks up where it left off.
 func processNewOrder(client *http.Client, services map[string]string, o newOrder) error {
+	// The same message can come back after the order was already finished: a redelivery,
+	// a DLQ redrive, or a crash before the delete. Check where the order is now and only
+	// finish what is missing. A cancelled order is never reserved or charged again.
+	status, err := getOrderStatus(client, services, o.OrderID)
+	if err != nil {
+		return err
+	}
+	switch status {
+	case "pending":
+		// Normal path below.
+	case "cancelled":
+		log.Printf("  -> order %d: already cancelled, making sure its stock is released", o.OrderID)
+		return releaseStock(client, services, o.OrderID)
+	default:
+		// confirmed or later: the charge already went through. Make sure the stock is
+		// committed; committing twice changes nothing.
+		log.Printf("  -> order %d: already %s, making sure its stock is committed", o.OrderID, status)
+		return commitStock(client, services, o.OrderID)
+	}
+
 	code, err := sendJSON(client, http.MethodPost, services["inventory"]+"/reserve", map[string]interface{}{
 		"order_id": o.OrderID,
 		"items":    o.Items,
@@ -183,14 +203,8 @@ func processNewOrder(client *http.Client, services map[string]string, o newOrder
 	case http.StatusCreated, http.StatusOK:
 	case http.StatusPaymentRequired:
 		log.Printf("  -> order %d: payment declined, releasing stock and cancelling", o.OrderID)
-		code, err := sendJSON(client, http.MethodPost, services["inventory"]+"/release", map[string]interface{}{
-			"order_id": o.OrderID,
-		})
-		if err != nil {
-			return fmt.Errorf("release after decline: %w", err)
-		}
-		if code != http.StatusOK {
-			return fmt.Errorf("release after decline: unexpected status %d", code)
+		if err := releaseStock(client, services, o.OrderID); err != nil {
+			return err
 		}
 		return setOrderStatus(client, services, o.OrderID, "cancelled")
 	default:
@@ -203,8 +217,46 @@ func processNewOrder(client *http.Client, services map[string]string, o newOrder
 
 	// Turn the held stock into a sale (ALPHA-77). Only after the confirm, so stock never
 	// leaves the shelf for an order that isn't confirmed.
-	code, err = sendJSON(client, http.MethodPost, services["inventory"]+"/commit", map[string]interface{}{
-		"order_id": o.OrderID,
+	return commitStock(client, services, o.OrderID)
+}
+
+// getOrderStatus asks order-service for the order's current status.
+func getOrderStatus(client *http.Client, services map[string]string, orderID int) (string, error) {
+	resp, err := client.Get(fmt.Sprintf("%s/%d", services["order"], orderID))
+	if err != nil {
+		return "", fmt.Errorf("get order: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("get order: unexpected status %d", resp.StatusCode)
+	}
+	var order struct {
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&order); err != nil || order.Status == "" {
+		return "", fmt.Errorf("get order: unreadable response")
+	}
+	return order.Status, nil
+}
+
+// releaseStock releases any stock still held for the order. Safe to repeat.
+func releaseStock(client *http.Client, services map[string]string, orderID int) error {
+	code, err := sendJSON(client, http.MethodPost, services["inventory"]+"/release", map[string]interface{}{
+		"order_id": orderID,
+	})
+	if err != nil {
+		return fmt.Errorf("release stock: %w", err)
+	}
+	if code != http.StatusOK {
+		return fmt.Errorf("release stock: unexpected status %d", code)
+	}
+	return nil
+}
+
+// commitStock turns the order's held stock into a sale. Safe to repeat.
+func commitStock(client *http.Client, services map[string]string, orderID int) error {
+	code, err := sendJSON(client, http.MethodPost, services["inventory"]+"/commit", map[string]interface{}{
+		"order_id": orderID,
 	})
 	if err != nil {
 		return fmt.Errorf("commit stock: %w", err)

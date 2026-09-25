@@ -37,6 +37,6 @@ variable "db_subnet_cidrs" {
 
 variable "azs" {
   description = "Availability zones to create subnets in"
-  type    = list(string)
-  default = ["eu-west-2a", "eu-west-2b", "eu-west-2c"]
+  type        = list(string)
+  default     = ["eu-west-2a", "eu-west-2b", "eu-west-2c"]
 }

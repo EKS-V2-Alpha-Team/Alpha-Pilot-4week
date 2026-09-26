@@ -384,6 +384,13 @@ func handleUpdateStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Asking for the status the order already has is a repeat (for example a redelivered
+	// SQS message), not a conflict. Answer 200 and change nothing.
+	if currentStatus == req.NewStatus {
+		writeStatusChange(w, req.OrderID, currentStatus, req.NewStatus, false)
+		return
+	}
+
 	// Validate transition
 	allowed, ok := validTransitions[currentStatus]
 	if !ok {
@@ -404,8 +411,6 @@ func handleUpdateStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// One transaction: status change, history row and outbox event are saved together.
-	// NOTE: the read-validate-update race (two concurrent transitions both accepted) is
-	// NOT fixed here; that is the next slice (compare-and-set on the UPDATE).
 	tx, err := db.Begin()
 	if err != nil {
 		httpError(w, "failed to update order", http.StatusInternalServerError)
@@ -413,11 +418,33 @@ func handleUpdateStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.Exec(
-		"UPDATE orders SET status = $1, updated_at = NOW() WHERE id = $2",
-		req.NewStatus, req.OrderID,
-	); err != nil {
+	// Only change the status if it is still the one we read (compare-and-set). If another
+	// request changed it in between, Postgres re-checks this WHERE against the new row and
+	// updates nothing, so two concurrent changes can't both win.
+	res, err := tx.Exec(
+		"UPDATE orders SET status = $1, updated_at = NOW() WHERE id = $2 AND status = $3",
+		req.NewStatus, req.OrderID, currentStatus,
+	)
+	if err != nil {
 		httpError(w, "failed to update order", http.StatusInternalServerError)
+		return
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		httpError(w, "failed to update order", http.StatusInternalServerError)
+		return
+	} else if n == 0 {
+		tx.Rollback()
+		var nowStatus string
+		if err := db.QueryRow("SELECT status FROM orders WHERE id = $1", req.OrderID).Scan(&nowStatus); err != nil {
+			httpError(w, "failed to update order", http.StatusInternalServerError)
+			return
+		}
+		if nowStatus == req.NewStatus {
+			// A concurrent copy of the same request got there first.
+			writeStatusChange(w, req.OrderID, nowStatus, req.NewStatus, false)
+			return
+		}
+		httpError(w, fmt.Sprintf("order changed to %s while updating", nowStatus), http.StatusConflict)
 		return
 	}
 
@@ -447,11 +474,18 @@ func handleUpdateStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	writeStatusChange(w, req.OrderID, currentStatus, req.NewStatus, true)
+}
+
+// writeStatusChange answers a status request. changed is false when the order was
+// already in the requested status, so nothing was written.
+func writeStatusChange(w http.ResponseWriter, orderID int, oldStatus, newStatus string, changed bool) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"order_id":   req.OrderID,
-		"old_status": currentStatus,
-		"new_status": req.NewStatus,
+		"order_id":   orderID,
+		"old_status": oldStatus,
+		"new_status": newStatus,
+		"changed":    changed,
 	})
 }
 

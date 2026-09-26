@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -13,7 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 )
 
 var db *sql.DB
@@ -121,6 +122,10 @@ func migrate() {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_reservations_order ON reservations(order_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_reservations_status ON reservations(status)`,
+		// One active reservation per order and product, so a repeated /reserve for the same
+		// order (e.g. SQS delivering order.created twice) can't hold stock twice (ALPHA-51).
+		`CREATE UNIQUE INDEX IF NOT EXISTS uq_reservations_active_order_product
+			ON reservations(order_id, product_id) WHERE status = 'active'`,
 	}
 	for _, m := range migrations {
 		if _, err := db.Exec(m); err != nil {
@@ -234,6 +239,15 @@ func handleReserve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Idempotent: an order that already holds stock gets success, not a second hold.
+	if existing, ok, err := activeReservationExpiry(req.OrderID); err != nil {
+		httpError(w, "reservation lookup failed", http.StatusInternalServerError)
+		return
+	} else if ok {
+		writeReservation(w, http.StatusOK, req.OrderID, existing)
+		return
+	}
+
 	tx, err := db.Begin()
 	if err != nil {
 		httpError(w, "transaction failed", http.StatusInternalServerError)
@@ -273,6 +287,15 @@ func handleReserve(w http.ResponseWriter, r *http.Request) {
 			"INSERT INTO reservations (order_id, product_id, quantity, status, expires_at) VALUES ($1, $2, $3, 'active', $4)",
 			req.OrderID, item.ProductID, item.Quantity, expiresAt,
 		); err != nil {
+			if isUniqueViolation(err) {
+				// A concurrent request for the same order reserved first. Undo ours
+				// (including the reserved increment) and report theirs.
+				tx.Rollback()
+				if existing, ok, err := activeReservationExpiry(req.OrderID); err == nil && ok {
+					writeReservation(w, http.StatusOK, req.OrderID, existing)
+					return
+				}
+			}
 			httpError(w, "reservation insert failed", http.StatusInternalServerError)
 			return
 		}
@@ -283,13 +306,34 @@ func handleReserve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	writeReservation(w, http.StatusCreated, req.OrderID, expiresAt)
+}
+
+// activeReservationExpiry returns the earliest expiry of the order's active
+// reservations, and ok=false when the order holds no stock.
+func activeReservationExpiry(orderID int) (time.Time, bool, error) {
+	var expiresAt sql.NullTime
+	err := db.QueryRow(
+		"SELECT MIN(expires_at) FROM reservations WHERE order_id = $1 AND status = 'active'",
+		orderID,
+	).Scan(&expiresAt)
+	return expiresAt.Time, expiresAt.Valid, err
+}
+
+func writeReservation(w http.ResponseWriter, code int, orderID int, expiresAt time.Time) {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
+	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"order_id":   req.OrderID,
+		"order_id":   orderID,
 		"status":     "reserved",
 		"expires_at": expiresAt.Format(time.RFC3339),
 	})
+}
+
+// isUniqueViolation reports whether err is Postgres error 23505 (unique_violation).
+func isUniqueViolation(err error) bool {
+	var pqErr *pq.Error
+	return errors.As(err, &pqErr) && pqErr.Code == "23505"
 }
 
 func handleRelease(w http.ResponseWriter, r *http.Request) {
@@ -313,8 +357,11 @@ func handleRelease(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
+	// Claim the active reservations and read what they held in one statement. A concurrent
+	// release waits on these row locks, then finds nothing left to claim, so `reserved` is
+	// decremented exactly once (ALPHA-51; the old SELECT-then-UPDATE let both subtract).
 	rows, err := tx.Query(
-		"SELECT product_id, quantity FROM reservations WHERE order_id = $1 AND status = 'active'",
+		"UPDATE reservations SET status = 'released' WHERE order_id = $1 AND status = 'active' RETURNING product_id, quantity",
 		req.OrderID,
 	)
 	if err != nil {
@@ -350,10 +397,6 @@ func handleRelease(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if _, err := tx.Exec("UPDATE reservations SET status = 'released' WHERE order_id = $1 AND status = 'active'", req.OrderID); err != nil {
-		httpError(w, "release update failed", http.StatusInternalServerError)
-		return
-	}
 	if err := tx.Commit(); err != nil {
 		httpError(w, "commit failed", http.StatusInternalServerError)
 		return

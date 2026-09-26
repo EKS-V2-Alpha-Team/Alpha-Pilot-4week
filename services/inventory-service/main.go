@@ -68,6 +68,7 @@ func main() {
 	mux.HandleFunc("/products/", handleProduct)
 	mux.HandleFunc("/reserve", handleReserve)
 	mux.HandleFunc("/release", handleRelease)
+	mux.HandleFunc("/commit", handleCommit)
 	mux.HandleFunc("/low-stock", handleLowStock)
 
 	port := getEnv("PORT", "8082")
@@ -239,8 +240,9 @@ func handleReserve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Idempotent: an order that already holds stock gets success, not a second hold.
-	if existing, ok, err := activeReservationExpiry(req.OrderID); err != nil {
+	// Idempotent: an order that already holds (or has bought) its stock gets success,
+	// not a second hold.
+	if existing, ok, err := existingReservationExpiry(req.OrderID); err != nil {
 		httpError(w, "reservation lookup failed", http.StatusInternalServerError)
 		return
 	} else if ok {
@@ -291,7 +293,7 @@ func handleReserve(w http.ResponseWriter, r *http.Request) {
 				// A concurrent request for the same order reserved first. Undo ours
 				// (including the reserved increment) and report theirs.
 				tx.Rollback()
-				if existing, ok, err := activeReservationExpiry(req.OrderID); err == nil && ok {
+				if existing, ok, err := existingReservationExpiry(req.OrderID); err == nil && ok {
 					writeReservation(w, http.StatusOK, req.OrderID, existing)
 					return
 				}
@@ -309,12 +311,13 @@ func handleReserve(w http.ResponseWriter, r *http.Request) {
 	writeReservation(w, http.StatusCreated, req.OrderID, expiresAt)
 }
 
-// activeReservationExpiry returns the earliest expiry of the order's active
-// reservations, and ok=false when the order holds no stock.
-func activeReservationExpiry(orderID int) (time.Time, bool, error) {
+// existingReservationExpiry returns the earliest expiry of the order's active or
+// committed reservations, and ok=false when the order holds no stock. Committed counts
+// so a repeated order.created after the sale doesn't hold the stock a second time.
+func existingReservationExpiry(orderID int) (time.Time, bool, error) {
 	var expiresAt sql.NullTime
 	err := db.QueryRow(
-		"SELECT MIN(expires_at) FROM reservations WHERE order_id = $1 AND status = 'active'",
+		"SELECT MIN(expires_at) FROM reservations WHERE order_id = $1 AND status IN ('active', 'committed')",
 		orderID,
 	).Scan(&expiresAt)
 	return expiresAt.Time, expiresAt.Valid, err
@@ -406,6 +409,80 @@ func handleRelease(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"order_id": req.OrderID,
 		"released": len(items),
+	})
+}
+
+// handleCommit turns an order's held stock into a sale: stock and reserved both drop by
+// the quantity and the reservation becomes 'committed', which the scheduler never
+// expires. Same claim-then-act pattern as release, so a repeat commits nothing.
+func handleCommit(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpError(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		OrderID int `json:"order_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		httpError(w, "transaction failed", http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.Query(
+		"UPDATE reservations SET status = 'committed' WHERE order_id = $1 AND status = 'active' RETURNING product_id, quantity",
+		req.OrderID,
+	)
+	if err != nil {
+		httpError(w, "commit failed", http.StatusInternalServerError)
+		return
+	}
+	type item struct {
+		productID string
+		quantity  int
+	}
+	var items []item
+	for rows.Next() {
+		var it item
+		if err := rows.Scan(&it.productID, &it.quantity); err != nil {
+			rows.Close()
+			httpError(w, "scan failed", http.StatusInternalServerError)
+			return
+		}
+		items = append(items, it)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		httpError(w, "iteration failed", http.StatusInternalServerError)
+		return
+	}
+
+	for _, it := range items {
+		if _, err := tx.Exec(
+			"UPDATE products SET stock = stock - $1, reserved = reserved - $1, updated_at = NOW() WHERE id = $2",
+			it.quantity, it.productID,
+		); err != nil {
+			httpError(w, "commit update failed", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		httpError(w, "commit failed", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"order_id":  req.OrderID,
+		"committed": len(items),
 	})
 }
 

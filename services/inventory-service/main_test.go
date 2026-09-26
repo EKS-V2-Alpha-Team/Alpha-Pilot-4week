@@ -187,3 +187,78 @@ func TestReserveAgainAfterReleaseWorks(t *testing.T) {
 		t.Errorf("reserved = %d, want 2", got)
 	}
 }
+
+func stockCount(t *testing.T) int {
+	t.Helper()
+	var n int
+	if err := db.QueryRow(`SELECT stock FROM products WHERE id = 'p1'`).Scan(&n); err != nil {
+		t.Fatalf("read stock: %v", err)
+	}
+	return n
+}
+
+func TestCommitTurnsHoldIntoSale(t *testing.T) {
+	setupTestDB(t)
+	post(t, handleReserve, reserveBody(1, 2))
+	if rec := post(t, handleCommit, map[string]int{"order_id": 1}); rec.Code != http.StatusOK {
+		t.Fatalf("commit: got %d, want 200: %s", rec.Code, rec.Body)
+	}
+	if stock, reserved := stockCount(t), reservedCount(t); stock != 3 || reserved != 0 {
+		t.Errorf("stock=%d reserved=%d, want stock=3 reserved=0", stock, reserved)
+	}
+	var status string
+	db.QueryRow(`SELECT status FROM reservations WHERE order_id = 1`).Scan(&status)
+	if status != "committed" {
+		t.Errorf("reservation status = %q, want committed", status)
+	}
+}
+
+func TestCommitTwiceTakesStockOnce(t *testing.T) {
+	setupTestDB(t)
+	post(t, handleReserve, reserveBody(1, 2))
+	post(t, handleCommit, map[string]int{"order_id": 1})
+	rec := post(t, handleCommit, map[string]int{"order_id": 1})
+	var resp struct {
+		Committed int `json:"committed"`
+	}
+	json.NewDecoder(rec.Body).Decode(&resp)
+	if rec.Code != http.StatusOK || resp.Committed != 0 {
+		t.Errorf("repeat commit: got %d committed=%d, want 200 committed=0", rec.Code, resp.Committed)
+	}
+	if stock := stockCount(t); stock != 3 {
+		t.Errorf("stock = %d, want 3", stock)
+	}
+}
+
+func TestConcurrentCommitsTakeStockOnce(t *testing.T) {
+	setupTestDB(t)
+	post(t, handleReserve, reserveBody(1, 2))
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			post(t, handleCommit, map[string]int{"order_id": 1})
+		}()
+	}
+	close(start)
+	wg.Wait()
+	if stock, reserved := stockCount(t), reservedCount(t); stock != 3 || reserved != 0 {
+		t.Errorf("stock=%d reserved=%d, want stock=3 reserved=0", stock, reserved)
+	}
+}
+
+func TestReserveAfterCommitHoldsNothingMore(t *testing.T) {
+	setupTestDB(t)
+	post(t, handleReserve, reserveBody(1, 2))
+	post(t, handleCommit, map[string]int{"order_id": 1})
+	// The same order.created delivered again after the sale.
+	if rec := post(t, handleReserve, reserveBody(1, 2)); rec.Code != http.StatusOK {
+		t.Fatalf("reserve after commit: got %d, want 200", rec.Code)
+	}
+	if stock, reserved := stockCount(t), reservedCount(t); stock != 3 || reserved != 0 {
+		t.Errorf("stock=%d reserved=%d, want stock=3 reserved=0", stock, reserved)
+	}
+}

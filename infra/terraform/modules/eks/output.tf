@@ -32,3 +32,13 @@ output "cluster_version" {
   description = "Kubernetes version of the cluster"
   value       = aws_eks_cluster.this.version
 }
+
+output "node_role_arn" {
+  description = "ARN of the IAM role used by the default managed node group"
+  value       = aws_iam_role.node.arn
+}
+
+output "node_group_name" {
+  description = "Name of the default managed node group"
+  value       = aws_eks_node_group.this.node_group_name
+}

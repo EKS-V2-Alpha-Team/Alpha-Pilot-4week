@@ -10,7 +10,7 @@
           "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
         },
         "StringLike": {
-          "token.actions.githubusercontent.com:sub": "repo:${github_org}/${github_repo}:*"
+          "token.actions.githubusercontent.com:sub": "repo:${github_org}@${github_org_id}/${github_repo}@${github_repo_id}:*"
         }
       }
     }

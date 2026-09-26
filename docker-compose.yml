@@ -45,11 +45,18 @@ services:
     build: ./services/api-gateway
     ports:
       - "8080:8080"
+      - "9091:9090"   # Prometheus metrics (separate port, never routed)
     environment:
       <<: *service-urls
       REDIS_URL: redis://redis:6379
       JWT_SECRET: local-dev-secret
       DASHBOARD_SERVICE_URL: http://dashboard-api:8086
+      # Rate limits per window (defaults shown). No proxy locally, so no trusted proxies.
+      RATE_LIMIT_WINDOW_SECONDS: "60"
+      RATE_LIMIT_USER_PER_WINDOW: "120"
+      RATE_LIMIT_IP_PER_WINDOW: "60"
+      RATE_LIMIT_SENSITIVE_PER_WINDOW: "20"
+      TRUSTED_PROXY_CIDRS: ""
     depends_on:
       - redis
 

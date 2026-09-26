@@ -58,6 +58,7 @@ func main() {
 	db.SetConnMaxLifetime(5 * time.Minute)
 	waitForDB()
 	migrate()
+	startMetricsServer(db, getEnv("METRICS_PORT", "9090"))
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/livez", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })

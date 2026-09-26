@@ -10,5 +10,5 @@ output "grafana_password_secret_arn" {
 
 output "kms_key_arn" {
   description = "ARN of the KMS key used to encrypt secrets"
-  value       = aws_kms_key.secrets.arn
+  value = aws_kms_key.secrets_manager.arn
 }

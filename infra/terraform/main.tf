@@ -21,6 +21,11 @@ module "eks" {
 module "pod-identity" {
   source = "./modules/pod-identity"
 
+  db_secret_arn = module.secrets_manager.db_secret_arn
+  cluster_name = module.eks.cluster_name
+  kms_key_arn = module.secrets_manager.kms_key_arn
+  #sqs_queue_arn = = this needs output from sqs arn
+
 }
 
 module "secrets_manager" {

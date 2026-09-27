@@ -17,17 +17,6 @@ module "eks" {
   cluster_admin_principal_arns = var.cluster_admin_principal_arns
 }
 
-module "karpenter" {
-  source = "./modules/karpenter"
-
-}
-
-module "observability" {
-  source = "./modules/observability"
-
-
-}
-
 module "pod-identity" {
   source = "./modules/pod-identity"
 

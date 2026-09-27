@@ -23,11 +23,6 @@ output "cluster_security_group_id" {
   value       = aws_eks_cluster.this.vpc_config[0].cluster_security_group_id
 }
 
-output "cluster_oidc_issuer_url" {
-  description = "URL of the cluster's OIDC identity provider, for IRSA"
-  value       = aws_eks_cluster.this.identity[0].oidc[0].issuer
-}
-
 output "cluster_version" {
   description = "Kubernetes version of the cluster"
   value       = aws_eks_cluster.this.version

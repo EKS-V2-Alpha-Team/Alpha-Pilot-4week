@@ -1,6 +1,6 @@
 resource "aws_eks_node_group" "this" {
   cluster_name    = aws_eks_cluster.this.name
-  node_group_name = "${var.project_name}-node-group"
+  node_group_name = "${var.project_name}-${var.environment}-node-group"
   node_role_arn   = aws_iam_role.node.arn
   subnet_ids      = var.private_subnet_ids
 
@@ -25,6 +25,6 @@ resource "aws_eks_node_group" "this" {
   ]
 
   tags = {
-    Name = "${var.project_name}-node-group"
+    Name = "${var.project_name}-${var.environment}-node-group"
   }
 }

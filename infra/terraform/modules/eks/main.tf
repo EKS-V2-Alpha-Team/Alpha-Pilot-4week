@@ -1,5 +1,5 @@
 resource "aws_eks_cluster" "this" {
-  name = "${var.project_name}-cluster"
+  name = "${var.project_name}-${var.environment}-cluster"
 
   access_config {
     authentication_mode = "API"
@@ -31,6 +31,6 @@ resource "aws_eks_cluster" "this" {
   ]
 
   tags = {
-    Name = "${var.project_name}-cluster"
+    Name = "${var.project_name}-${var.environment}-cluster"
   }
 }

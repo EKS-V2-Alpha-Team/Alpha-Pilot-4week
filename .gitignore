@@ -25,6 +25,10 @@ services/worker/worker
 *.tfvars
 .terraform.lock.hcl
 
+# Local Floci testing
+/infra/terraform/local/
+/scripts/floci-local-test.sh
+
 # Kubernetes
 kubeconfig
 *.kubeconfig

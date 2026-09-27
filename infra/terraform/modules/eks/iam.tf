@@ -1,5 +1,5 @@
 resource "aws_iam_role" "cluster" {
-  name = "${var.project_name}-eks-cluster-role"
+  name = "${var.project_name}-cluster-role"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -42,7 +42,7 @@ resource "aws_eks_access_policy_association" "cluster_admin" {
 }
 
 resource "aws_iam_role" "node" {
-  name = "${var.project_name}-eks-node-role"
+  name = "${var.project_name}-node-role"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [

@@ -14,7 +14,7 @@ resource "aws_eks_cluster" "this" {
 
   encryption_config {
     provider {
-      key_arn = aws_kms_key.eks.arn
+      key_arn = aws_kms_key.cluster-kms.arn
     }
     resources = ["secrets"]
   }
@@ -27,7 +27,7 @@ resource "aws_eks_cluster" "this" {
   # and control plane logs would land in an auto-created, unmanaged log group.
   depends_on = [
     aws_iam_role_policy_attachment.cluster_AmazonEKSClusterPolicy,
-    aws_cloudwatch_log_group.cluster,
+    aws_cloudwatch_log_group.logs,
   ]
 
   tags = {

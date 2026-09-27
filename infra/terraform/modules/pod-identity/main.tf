@@ -122,7 +122,7 @@ resource "aws_eks_pod_identity_association" "sqs" {
   role_arn        = aws_iam_role.sqs_pod_role.arn
 }
 
-# external-dns 
+# external-dns
 
 resource "aws_iam_role" "external_dns_pod_role" {
   name = "${var.project_name}-external-dns-pod-role"
@@ -185,7 +185,7 @@ resource "aws_iam_role_policy_attachment" "external_dns_attachment" {
 
 resource "aws_eks_pod_identity_association" "external_dns" {
   cluster_name    = var.cluster_name
-  namespace       = "external-dns"  # no variable needed as this is the namespace/svc account ,that external dns deploys into the cluster
+  namespace       = "external-dns" # no variable needed as this is the namespace/svc account ,that external dns deploys into the cluster
   service_account = "external-dns"
   role_arn        = aws_iam_role.external_dns_pod_role.arn
 }

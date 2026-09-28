@@ -1,0 +1,10 @@
+# order-service in dev.
+image:
+  # Written by CI on every build of order-service. Placeholder until the first deploy.
+  tag: order-service-replace-me
+
+replicaCount: 1
+
+env:
+  # TODO(ALPHA-xx): replace with the SQS queue URL output once the SQS module exists.
+  SQS_QUEUE_URL: https://sqs.eu-west-2.amazonaws.com/000000000000/eks-v2-dev-order-events

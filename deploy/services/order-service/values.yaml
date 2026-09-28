@@ -1,0 +1,16 @@
+# order-service
+component: api
+containerPort: 8081
+
+env:
+  PGAPPNAME: order-service
+
+database:
+  enabled: true
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 128Mi

@@ -1,0 +1,19 @@
+# api-gateway: the only public entrypoint. Auth, rate limiting, routing.
+component: gateway
+containerPort: 8080
+metricsPort: 9090
+
+env:
+  REDIS_URL: redis://redis:6379
+
+# JWT_SECRET key is environment-specific: see deploy/envs/<env>/api-gateway.yaml
+
+serviceMonitor:
+  enabled: true
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 256Mi

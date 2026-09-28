@@ -1,0 +1,16 @@
+# dashboard-api
+component: frontend
+containerPort: 8086
+
+env:
+  PGAPPNAME: dashboard-api
+
+database:
+  enabled: true
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 128Mi

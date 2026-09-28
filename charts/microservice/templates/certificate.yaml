@@ -1,0 +1,17 @@
+{{- /* IngressRoute does not support cert-manager's ingress-shim annotations,
+     so the Certificate is created explicitly. */ -}}
+{{- if and .Values.ingressRoute.enabled .Values.ingressRoute.tls.enabled }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "microservice.fullname" . }}
+  labels:
+    {{- include "microservice.labels" . | nindent 4 }}
+spec:
+  secretName: {{ include "microservice.fullname" . }}-tls
+  dnsNames:
+    - {{ .Values.ingressRoute.host }}
+  issuerRef:
+    kind: ClusterIssuer
+    name: {{ .Values.ingressRoute.tls.clusterIssuer }}
+{{- end }}

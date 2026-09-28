@@ -1,0 +1,485 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "microservice chart values",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "image",
+    "resources",
+    "containerPort",
+    "livenessProbe",
+    "readinessProbe"
+  ],
+  "properties": {
+    "global": {
+      "type": "object"
+    },
+    "fullnameOverride": {
+      "type": "string"
+    },
+    "component": {
+      "type": "string",
+      "enum": [
+        "",
+        "api",
+        "gateway",
+        "worker",
+        "scheduler",
+        "frontend"
+      ]
+    },
+    "partOf": {
+      "type": "string",
+      "minLength": 1
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "tag"
+      ],
+      "properties": {
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tag": {
+          "type": "string",
+          "minLength": 1,
+          "not": {
+            "enum": [
+              "latest",
+              "stable",
+              "main"
+            ]
+          },
+          "description": "Immutable tag written by CI, e.g. order-service-1a2b3c4"
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^$|^sha256:[a-f0-9]{64}$"
+        },
+        "pullPolicy": {
+          "type": "string",
+          "enum": [
+            "IfNotPresent",
+            "Always",
+            "Never"
+          ]
+        }
+      }
+    },
+    "replicaCount": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "singleton": {
+      "type": "boolean"
+    },
+    "containerPort": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535
+    },
+    "portEnvName": {
+      "type": "string",
+      "pattern": "^[A-Z_][A-Z0-9_]*$"
+    },
+    "metricsPort": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 1,
+      "maximum": 65535
+    },
+    "env": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[A-Z_][A-Z0-9_]*$"
+      },
+      "additionalProperties": {
+        "type": [
+          "string",
+          "number",
+          "boolean"
+        ]
+      }
+    },
+    "database": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "credentialsSecret": {
+          "type": "string"
+        },
+        "host": {
+          "type": "string",
+          "minLength": 1
+        },
+        "port": {
+          "type": "integer"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sslMode": {
+          "type": "string",
+          "enum": [
+            "disable",
+            "require",
+            "verify-ca",
+            "verify-full"
+          ]
+        }
+      }
+    },
+    "externalSecrets": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "secretStoreRef": {
+          "type": "object",
+          "required": [
+            "name",
+            "kind"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "SecretStore",
+                "ClusterSecretStore"
+              ]
+            }
+          }
+        },
+        "refreshInterval": {
+          "type": "string"
+        },
+        "env": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "key"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[A-Z_][A-Z0-9_]*$"
+              },
+              "key": {
+                "type": "string",
+                "minLength": 1
+              },
+              "property": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "port": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 65535
+        }
+      }
+    },
+    "serviceAccount": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "automount": {
+          "type": "boolean"
+        },
+        "annotations": {
+          "type": "object"
+        }
+      }
+    },
+    "podSecurityContext": {
+      "type": "object"
+    },
+    "securityContext": {
+      "type": "object"
+    },
+    "resources": {
+      "type": "object",
+      "required": [
+        "requests",
+        "limits"
+      ],
+      "properties": {
+        "requests": {
+          "type": "object",
+          "required": [
+            "cpu",
+            "memory"
+          ],
+          "properties": {
+            "cpu": {
+              "type": [
+                "string",
+                "integer"
+              ]
+            },
+            "memory": {
+              "type": [
+                "string",
+                "integer"
+              ]
+            }
+          }
+        },
+        "limits": {
+          "type": "object",
+          "required": [
+            "memory"
+          ],
+          "properties": {
+            "cpu": {
+              "type": [
+                "string",
+                "integer"
+              ]
+            },
+            "memory": {
+              "type": [
+                "string",
+                "integer"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "livenessProbe": {
+      "$ref": "#/definitions/probe"
+    },
+    "readinessProbe": {
+      "$ref": "#/definitions/probe"
+    },
+    "startupProbe": {
+      "$ref": "#/definitions/probe"
+    },
+    "strategy": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "RollingUpdate",
+            "Recreate"
+          ]
+        },
+        "rollingUpdate": {
+          "type": "object"
+        }
+      }
+    },
+    "progressDeadlineSeconds": {
+      "type": "integer",
+      "minimum": 30
+    },
+    "revisionHistoryLimit": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "preStopSleepSeconds": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "terminationGracePeriodSeconds": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "autoscaling": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "minReplicas": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxReplicas": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "targetCPUUtilizationPercentage": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "targetMemoryUtilizationPercentage": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 100
+        }
+      }
+    },
+    "pdb": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "maxUnavailable": {
+          "type": [
+            "integer",
+            "string"
+          ]
+        }
+      }
+    },
+    "topologySpread": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "whenUnsatisfiable": {
+          "type": "string",
+          "enum": [
+            "ScheduleAnyway",
+            "DoNotSchedule"
+          ]
+        }
+      }
+    },
+    "serviceMonitor": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "interval": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "labels": {
+          "type": "object"
+        }
+      }
+    },
+    "ingressRoute": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "host": {
+          "type": "string"
+        },
+        "entryPoints": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "middlewares": {
+          "type": "array"
+        },
+        "tls": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "clusterIssuer": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "reloader": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      }
+    },
+    "podAnnotations": {
+      "type": "object"
+    },
+    "podLabels": {
+      "type": "object"
+    },
+    "priorityClassName": {
+      "type": "string"
+    },
+    "nodeSelector": {
+      "type": "object"
+    },
+    "tolerations": {
+      "type": "array"
+    },
+    "affinity": {
+      "type": "object"
+    },
+    "extraVolumes": {
+      "type": "array"
+    },
+    "extraVolumeMounts": {
+      "type": "array"
+    }
+  },
+  "definitions": {
+    "probe": {
+      "type": "object",
+      "required": [
+        "httpGet"
+      ],
+      "description": "httpGet only: the images are distroless, so exec probes cannot work.",
+      "properties": {
+        "httpGet": {
+          "type": "object",
+          "required": [
+            "path",
+            "port"
+          ]
+        }
+      }
+    }
+  }
+}

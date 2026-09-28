@@ -1,0 +1,6 @@
+# notification-service in dev.
+image:
+  # Written by CI on every build of notification-service. Placeholder until the first deploy.
+  tag: notification-service-replace-me
+
+replicaCount: 1

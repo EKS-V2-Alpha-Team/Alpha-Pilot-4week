@@ -1,62 +1,92 @@
 {{/*
-Expand the name of the chart.
-*/}}
-{{- define "microservice.name" -}}
-{{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
-{{- end }}
-
-{{/*
-Create a default fully qualified app name.
-We truncate at 63 chars because some Kubernetes name fields are limited to this (by the DNS naming spec).
-If release name contains chart name it will be used as a full name.
+Resource name. Always the release name (e.g. "order-service") so that in-cluster
+DNS matches the service URLs the Go code defaults to (http://order-service:8081).
+Deliberately does NOT append the chart name like the `helm create` default.
 */}}
 {{- define "microservice.fullname" -}}
-{{- if .Values.fullnameOverride }}
-{{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
-{{- else }}
-{{- $name := default .Chart.Name .Values.nameOverride }}
-{{- if contains $name .Release.Name }}
-{{- .Release.Name | trunc 63 | trimSuffix "-" }}
-{{- else }}
-{{- printf "%s-%s" .Release.Name $name | trunc 63 | trimSuffix "-" }}
-{{- end }}
-{{- end }}
+{{- default .Release.Name .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
 {{/*
-Create chart name and version as used by the chart label.
+Chart name and version, used in the helm.sh/chart label.
 */}}
 {{- define "microservice.chart" -}}
 {{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
 {{/*
-Common labels
-*/}}
-{{- define "microservice.labels" -}}
-helm.sh/chart: {{ include "microservice.chart" . }}
-{{ include "microservice.selectorLabels" . }}
-{{- if .Chart.AppVersion }}
-app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
-{{- end }}
-app.kubernetes.io/managed-by: {{ .Release.Service }}
-{{- end }}
-
-{{/*
-Selector labels
+Selector labels. These end up in Deployment.spec.selector, which is immutable:
+never add to or change this list after the first install.
 */}}
 {{- define "microservice.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "microservice.name" . }}
+app.kubernetes.io/name: {{ include "microservice.fullname" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{/*
-Create the name of the service account to use
+Common labels, applied to every resource.
+*/}}
+{{- define "microservice.labels" -}}
+helm.sh/chart: {{ include "microservice.chart" . }}
+{{ include "microservice.selectorLabels" . }}
+app.kubernetes.io/version: {{ .Values.image.tag | trunc 63 | trimSuffix "-" | quote }}
+{{- with .Values.component }}
+app.kubernetes.io/component: {{ . }}
+{{- end }}
+app.kubernetes.io/part-of: {{ .Values.partOf }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}
+
+{{/*
+ServiceAccount name. Fixed to the release name because EKS Pod Identity
+associations in Terraform are keyed on namespace + this exact name.
 */}}
 {{- define "microservice.serviceAccountName" -}}
-{{- if .Values.serviceAccount.create }}
-{{- default (include "microservice.fullname" .) .Values.serviceAccount.name }}
-{{- else }}
-{{- default "default" .Values.serviceAccount.name }}
+{{- include "microservice.fullname" . }}
+{{- end }}
+
+{{/*
+Container image reference. A digest wins over a tag when both are set.
+*/}}
+{{- define "microservice.image" -}}
+{{- if .Values.image.digest -}}
+{{ .Values.image.repository }}@{{ .Values.image.digest }}
+{{- else -}}
+{{ .Values.image.repository }}:{{ .Values.image.tag }}
+{{- end }}
+{{- end }}
+
+{{/*
+Lowest number of pods the service runs with. Drives whether a PDB makes sense.
+*/}}
+{{- define "microservice.minReplicas" -}}
+{{- if .Values.autoscaling.enabled -}}
+{{ .Values.autoscaling.minReplicas }}
+{{- else -}}
+{{ .Values.replicaCount }}
+{{- end }}
+{{- end }}
+
+{{/*
+True (non-empty) when this service needs an ExternalSecret.
+*/}}
+{{- define "microservice.hasSecrets" -}}
+{{- if or .Values.database.enabled .Values.externalSecrets.env -}}
+true
+{{- end }}
+{{- end }}
+
+{{/*
+Guard rails for singleton workloads (e.g. scheduler, which runs cron on an
+in-process ticker: two replicas would run every job twice).
+*/}}
+{{- define "microservice.validate" -}}
+{{- if .Values.singleton }}
+{{- if .Values.autoscaling.enabled }}
+{{- fail "singleton: true cannot be combined with autoscaling.enabled" }}
+{{- end }}
+{{- if gt (int .Values.replicaCount) 1 }}
+{{- fail "singleton: true requires replicaCount: 1" }}
+{{- end }}
 {{- end }}
 {{- end }}

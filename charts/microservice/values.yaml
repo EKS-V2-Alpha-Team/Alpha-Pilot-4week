@@ -1,161 +1,200 @@
-# Default values for microservice.
-# This is a YAML-formatted file.
-# Declare variables to be passed into your templates.
+# Opinionated defaults shared by every order-platform service.
+#
+# Layering (later files win):
+#   1. this file                           -> platform-wide defaults
+#   2. deploy/services/<svc>/values.yaml   -> what the service is (ports, env, resources)
+#   3. deploy/envs/<env>/common.yaml       -> env-wide settings (registry, DB secret, region)
+#   4. deploy/envs/<env>/<svc>.yaml        -> env + service specific (image tag, replicas)
+#
+# Values are validated against values.schema.json on lint/template/install.
 
-# This will set the replicaset count more information can be found here: https://kubernetes.io/docs/concepts/workloads/controllers/replicaset/
-replicaCount: 1
-
-# This sets the container image more information can be found here: https://kubernetes.io/docs/concepts/containers/images/
-image:
-  repository: nginx
-  # This sets the pull policy for images.
-  pullPolicy: IfNotPresent
-  # Overrides the image tag whose default is the chart appVersion.
-  tag: ""
-
-# This is for the secrets for pulling an image from a private repository more information can be found here: https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/
-imagePullSecrets: []
-# This is to override the chart name.
-nameOverride: ""
+# -- Overrides the resource name. Leave empty: the release name IS the service name.
 fullnameOverride: ""
 
-# This section builds out the service account more information can be found here: https://kubernetes.io/docs/concepts/security/service-accounts/
-serviceAccount:
-  # Specifies whether a service account should be created.
-  create: true
-  # Automatically mount a ServiceAccount's API credentials?
-  automount: true
-  # Annotations to add to the service account.
-  annotations: {}
-  # The name of the service account to use.
-  # If not set and create is true, a name is generated using the fullname template.
-  name: ""
+# -- app.kubernetes.io/component label (api, gateway, worker, scheduler, frontend).
+component: ""
+# -- app.kubernetes.io/part-of label.
+partOf: order-platform
 
-# This is for setting Kubernetes Annotations to a Pod.
-# For more information checkout: https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations/
-podAnnotations: {}
-# This is for setting Kubernetes Labels to a Pod.
-# For more information checkout: https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/
-podLabels: {}
+image:
+  # -- Required. ECR repository URI (set per environment).
+  repository: ""
+  # -- Required. Immutable tag written by CI. "latest" is rejected by the schema.
+  tag: ""
+  # -- Optional. Pin by digest instead of tag (sha256:...). Wins over tag.
+  digest: ""
+  pullPolicy: IfNotPresent
 
-podSecurityContext: {}
-  # fsGroup: 2000
+# -- Ignored when autoscaling.enabled is true (the HPA owns replicas then).
+replicaCount: 1
 
-securityContext: {}
-  # capabilities:
-  #   drop:
-  #   - ALL
-  # readOnlyRootFilesystem: true
-  # runAsNonRoot: true
-  # runAsUser: 1000
+# -- Set true for workloads that must never run more than one pod (scheduler).
+# Forces the Recreate strategy and fails rendering if replicas > 1 or HPA is on.
+singleton: false
 
-# This is for setting up a service more information can be found here: https://kubernetes.io/docs/concepts/services-networking/service/
+# -- Main container port, named "http". Probes and the Service target it by name.
+containerPort: 8080
+# -- Env var the app reads its listen port from. The chart sets it from
+# containerPort so the two can never drift. Worker/scheduler use HEALTH_PORT.
+portEnvName: PORT
+
+# -- Optional Prometheus metrics port, named "metrics" (sets METRICS_PORT).
+metricsPort: null
+
+# -- Non-secret environment variables, rendered into a ConfigMap.
+# Values are always quoted, so "60" stays a string.
+env: {}
+
+# -- Postgres access. When enabled, DATABASE_URL is built by External Secrets
+# from a Secrets Manager secret shaped {"username": "...", "password": "..."}.
+database:
+  enabled: false
+  # -- Secrets Manager secret name (set per environment).
+  credentialsSecret: ""
+  host: postgres
+  port: 5432
+  name: orders
+  sslMode: disable
+
+# -- Extra secret env vars pulled from AWS Secrets Manager via External Secrets.
+externalSecrets:
+  secretStoreRef:
+    name: aws-secrets-manager
+    kind: ClusterSecretStore
+  refreshInterval: 1h
+  # -- e.g. [{ name: JWT_SECRET, key: eks-v2-dev-jwt-secret }]
+  # Add `property: <json-key>` when the secret value is JSON.
+  env: []
+
 service:
-  # This sets the service type more information can be found here: https://kubernetes.io/docs/concepts/services-networking/service/#publishing-services-service-types
-  type: ClusterIP
-  # This sets the ports more information can be found here: https://kubernetes.io/docs/concepts/services-networking/service/#field-spec-ports
-  port: 80
+  # -- Set false for services that take no traffic (worker, scheduler).
+  enabled: true
+  # -- Defaults to containerPort, so http://<svc>:<port> matches the Go defaults.
+  port: null
 
-# This block is for setting up the ingress for more information can be found here: https://kubernetes.io/docs/concepts/services-networking/ingress/
-ingress:
-  enabled: false
-  className: ""
+serviceAccount:
+  # -- Mount the Kubernetes API token. The services never call the K8s API.
+  # EKS Pod Identity injects its own token volume, so AWS access still works.
+  automount: false
   annotations: {}
-    # kubernetes.io/ingress.class: nginx
-    # kubernetes.io/tls-acme: "true"
-  hosts:
-    - host: chart-example.local
-      paths:
-        - path: /
-          pathType: ImplementationSpecific
-  tls: []
-    # - secretName: chart-example-tls
-    #   hosts:
-    #     - chart-example.local
 
-# -- Expose the service via gateway-api HTTPRoute
-# Requires Gateway API resources and suitable controller installed within the cluster
-# (see: https://gateway-api.sigs.k8s.io/guides/)
-httpRoute:
-  # HTTPRoute enabled.
-  enabled: false
-  # HTTPRoute annotations.
-  annotations: {}
-  # Which Gateways this Route is attached to.
-  parentRefs:
-  - name: gateway
-    sectionName: http
-    # namespace: default
-  # Hostnames matching HTTP header.
-  hostnames:
-  - chart-example.local
-  # List of rules and filters applied.
-  rules:
-  - matches:
-    - path:
-        type: PathPrefix
-        value: /headers
-  #   filters:
-  #   - type: RequestHeaderModifier
-  #     requestHeaderModifier:
-  #       set:
-  #       - name: My-Overwrite-Header
-  #         value: this-is-the-only-value
-  #       remove:
-  #       - User-Agent
-  # - matches:
-  #   - path:
-  #       type: PathPrefix
-  #       value: /echo
-  #     headers:
-  #     - name: version
-  #       value: v2
+# -- Pod-level security. Matches the distroless nonroot user (65532).
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
 
+# -- Container-level security.
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# -- Required per service (schema): requests.cpu, requests.memory, limits.memory.
+# No CPU limit by default on purpose: CPU limits cause throttling on Go services.
 resources: {}
-  # We usually recommend not to specify default resources and to leave this as a conscious
-  # choice for the user. This also increases chances charts run on environments with little
-  # resources, such as Minikube. If you do want to specify resources, uncomment the following
-  # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
-  # limits:
-  #   cpu: 100m
-  #   memory: 128Mi
-  # requests:
-  #   cpu: 100m
-  #   memory: 128Mi
 
-# This is to setup the liveness and readiness probes more information can be found here: https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/
+# -- Liveness: process is alive. Never point this at /healthz: a DB blip would
+# restart every pod at once.
 livenessProbe:
   httpGet:
-    path: /
+    path: /livez
     port: http
+  periodSeconds: 10
+  timeoutSeconds: 2
+  failureThreshold: 3
+
+# -- Readiness: dependencies are OK, send traffic.
 readinessProbe:
   httpGet:
-    path: /
+    path: /healthz
     port: http
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
 
-# This section is for setting up autoscaling more information can be found here: https://kubernetes.io/docs/concepts/workloads/autoscaling/
+# -- Startup: gives migrate() and first DB connection up to 150s before
+# liveness kicks in.
+startupProbe:
+  httpGet:
+    path: /livez
+    port: http
+  periodSeconds: 5
+  failureThreshold: 30
+
+strategy:
+  # -- RollingUpdate or Recreate (forced to Recreate when singleton: true).
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 1
+    # -- 0 = never drop below desired capacity during a rollout.
+    maxUnavailable: 0
+
+# -- Rollout is marked failed after this many seconds (ArgoCD shows Degraded).
+progressDeadlineSeconds: 300
+revisionHistoryLimit: 5
+
+# -- Seconds to keep serving after SIGTERM is scheduled, so endpoints and
+# Traefik stop sending traffic before the app shuts down.
+preStopSleepSeconds: 10
+# -- Must exceed preStopSleepSeconds + the app's own shutdown timeout.
+terminationGracePeriodSeconds: 45
+
 autoscaling:
   enabled: false
-  minReplicas: 1
-  maxReplicas: 100
-  targetCPUUtilizationPercentage: 80
-  # targetMemoryUtilizationPercentage: 80
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+  # -- Optional. Leave null to scale on CPU only.
+  targetMemoryUtilizationPercentage: null
 
-# Additional volumes on the output Deployment definition.
-volumes: []
-  # - name: foo
-  #   secret:
-  #     secretName: mysecret
-  #     optional: false
+pdb:
+  # -- Only rendered when the service runs 2+ pods (a PDB on 1 pod blocks drains).
+  enabled: true
+  maxUnavailable: 1
 
-# Additional volumeMounts on the output Deployment definition.
-volumeMounts: []
-  # - name: foo
-  #   mountPath: "/etc/foo"
-  #   readOnly: true
+# -- Spread pods across AZs. ScheduleAnyway = best effort, never blocks scheduling.
+topologySpread:
+  enabled: true
+  whenUnsatisfiable: ScheduleAnyway
 
+serviceMonitor:
+  # -- Needs metricsPort and the Prometheus Operator CRDs (skipped if missing).
+  enabled: false
+  interval: 30s
+  path: /metrics
+  labels: {}
+
+# -- Traefik IngressRoute. Only the public entrypoint (api-gateway) enables it.
+ingressRoute:
+  enabled: false
+  # -- Required when enabled.
+  host: ""
+  entryPoints:
+    - websecure
+  middlewares: []
+  tls:
+    # -- Create a cert-manager Certificate for host.
+    enabled: true
+    # -- Use letsencrypt-staging while testing (prod has strict rate limits).
+    clusterIssuer: letsencrypt-staging
+
+# -- Restart pods when the synced Secret changes (needs Stakater Reloader).
+reloader:
+  enabled: true
+
+podAnnotations: {}
+podLabels: {}
+priorityClassName: ""
 nodeSelector: {}
-
 tolerations: []
-
 affinity: {}
+
+# -- Extra volumes/mounts on top of the chart-managed /tmp emptyDir.
+extraVolumes: []
+extraVolumeMounts: []

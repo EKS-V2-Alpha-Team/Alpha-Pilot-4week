@@ -1,0 +1,15 @@
+# Settings shared by every service in dev.
+
+image:
+  # TODO(ALPHA-xx): replace 000000000000 with the dev AWS account ID.
+  # CI currently pushes all services to this single repo with tags <service>-<sha>.
+  repository: 000000000000.dkr.ecr.eu-west-2.amazonaws.com/eks-v2-dev-ecr
+
+env:
+  AWS_REGION: eu-west-2
+
+database:
+  # Terraform: module.secrets_manager -> {"username", "password"}
+  credentialsSecret: eks-v2-dev-db-credentials
+  # In-cluster Postgres StatefulSet Service (same namespace).
+  host: postgres

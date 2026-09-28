@@ -1,0 +1,6 @@
+# scheduler in dev.
+image:
+  # Written by CI on every build of scheduler. Placeholder until the first deploy.
+  tag: scheduler-replace-me
+
+replicaCount: 1

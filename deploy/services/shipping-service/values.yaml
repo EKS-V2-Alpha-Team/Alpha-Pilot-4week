@@ -1,0 +1,16 @@
+# shipping-service
+component: api
+containerPort: 8085
+
+env:
+  PGAPPNAME: shipping-service
+
+database:
+  enabled: true
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 128Mi

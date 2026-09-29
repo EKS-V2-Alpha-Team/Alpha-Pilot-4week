@@ -29,3 +29,10 @@ module "secrets_manager" {
   project_name = var.project_name
   environment  = var.environment
 }
+
+module "sqs" {
+  source = "./modules/sqs"
+
+  project_name = var.project_name
+  environment  = var.environment
+}

@@ -37,26 +37,47 @@ variable "secrets_manager_service_account" {
   default     = "secrets_manager" # we will need to specify the svc account once we have figured out what we will name them - this is temporary
 }
 
+variable "aws_region" {
+  description = "AWS region to deploy resources"
+  type        = string
+}
+
+variable "worker_node_role_arn" {
+  description = "this is the iam role of the worker nodes"
+  type        = string
+}
+
 variable "sqs_queue_arn" {
   type        = string
   description = "this is the arn of the sqs queue"
-  default     = "N/A" # we will remove this line once the output is received by the on who creates sqs
 }
 
-variable "sqs_namespace" {
+variable "order_service_namespace" {
   type        = string
-  description = "Kubernetes namespace for workload that needs sqs"
-  default     = "sqs" # we will need to specify the namespace  once we have figured out what we will name them - this is temporary
+  default     = "order-service" #placeholder
+  description = "this is the order service app namespace"
 }
 
-variable "sqs_service_account" {
+variable "order_service_service_account" {
   type        = string
-  description = "Kubernetes svc account for workload that needs sqs"
-  default     = "sqs" # we will need to specify the svc account once we have figured out what we will name them - this is temporary
+  default     = "order-service" #placeholder
+  description = "this is the order service app svc account"
+}
+
+variable "worker_namespace" {
+  type        = string
+  default     = "worker" #placeholder
+  description = "this is the worker app namespace"
+}
+
+variable "worker_service_account" {
+  type        = string
+  default     = "worker" #placeholder
+  description = "this is the worker app svc account"
 }
 
 variable "route53_hosted_zone_arn" {
   type        = string
   description = "ARN of the specific hosted zone externaldns will update/delete etc"
-  default     = "this is temporary- we will change it once we figure out what the hosted zone is"
+  default = "n/a" #placeholder
 }

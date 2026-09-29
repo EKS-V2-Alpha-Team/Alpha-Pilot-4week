@@ -78,6 +78,6 @@ variable "worker_service_account" {
 
 variable "route53_hosted_zone_arn" {
   type        = string
-  description = "ARN of the specific hosted zone externaldns will update/delete etc"
-  default = "n/a" #placeholder
+  description = "ARN of the specific hosted zone externaldns will update/delete etc!"
+  default     = "n/a" #placeholder
 }

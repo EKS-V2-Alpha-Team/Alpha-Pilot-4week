@@ -21,10 +21,12 @@ module "eks" {
 module "pod-identity" {
   source = "./modules/pod-identity"
 
-  db_secret_arn        = module.secrets_manager.db_secret_arn
-  cluster_name         = module.eks.cluster_name
-  kms_key_arn          = module.secrets_manager.kms_key_arn
-  sqs_queue_arn        = module.sqs.queue_arn
+  db_secret_arn = module.secrets_manager.db_secret_arn
+  project_name  = var.project_name
+  cluster_name  = module.eks.cluster_name
+  kms_key_arn   = module.secrets_manager.kms_key_arn
+  environment   = var.environment
+  sqs_queue_arn = module.sqs.queue_arn
 }
 
 module "secrets_manager" {

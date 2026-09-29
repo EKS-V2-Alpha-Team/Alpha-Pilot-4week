@@ -4,6 +4,11 @@ variable "project_name" {
   default     = "eks-v2"
 }
 
+variable "environment" {
+  description = "Environment name (dev, staging, prod)"
+  type        = string
+}
+
 variable "db_secret_arn" {
   description = "Arn of the database secret"
   type        = string

@@ -1,5 +1,5 @@
 resource "aws_iam_role" "secrets_manager_pod_role" {
-  name = "${var.project_name}-secrets-manager-pod-role"
+  name = "${var.project_name}-${var.environment}-secrets-manager-pod-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -22,7 +22,7 @@ resource "aws_iam_role" "secrets_manager_pod_role" {
 }
 
 resource "aws_iam_policy" "secrets_manager_read" {
-  name = "${var.project_name}-secrets-manager-read"
+  name = "${var.project_name}-${var.environment}-secrets-manager-read"
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -65,7 +65,7 @@ resource "aws_eks_pod_identity_association" "secrets_manager" {
 # SQS pod identity
 
 resource "aws_iam_role" "sqs_pod_role" {
-  name = "${var.project_name}-sqs-pod-role"
+  name = "${var.project_name}-${var.environment}-sqs-pod-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -88,7 +88,7 @@ resource "aws_iam_role" "sqs_pod_role" {
 }
 
 resource "aws_iam_policy" "sqs_access" {
-  name = "${var.project_name}-sqs-access"
+  name = "${var.project_name}-${var.environment}-sqs-access"
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -125,7 +125,7 @@ resource "aws_eks_pod_identity_association" "sqs" {
 # external-dns
 
 resource "aws_iam_role" "external_dns_pod_role" {
-  name = "${var.project_name}-external-dns-pod-role"
+  name = "${var.project_name}-${var.environment}-external-dns-pod-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -148,7 +148,7 @@ resource "aws_iam_role" "external_dns_pod_role" {
 }
 
 resource "aws_iam_policy" "external_dns" {
-  name = "${var.project_name}-external-dns"
+  name = "${var.project_name}-${var.environment}-external-dns"
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -193,7 +193,7 @@ resource "aws_eks_pod_identity_association" "external_dns" {
 # cert manager
 
 resource "aws_iam_role" "cert_manager_pod_role" {
-  name = "${var.project_name}-cert-manager-pod-role"
+  name = "${var.project_name}-${var.environment}-cert-manager-pod-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -216,7 +216,7 @@ resource "aws_iam_role" "cert_manager_pod_role" {
 }
 
 resource "aws_iam_policy" "cert_manager" {
-  name = "${var.project_name}-cert-manager"
+  name = "${var.project_name}-${var.environment}-cert-manager"
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -264,4 +264,62 @@ resource "aws_eks_pod_identity_association" "cert_manager" {
   namespace       = "cert-manager" # no variable needed as this is the namespace/svc account ,that cert manager deploys into the cluster but double check for cert manager
   service_account = "cert-manager"
   role_arn        = aws_iam_role.cert_manager_pod_role.arn
+}
+
+# karpenter
+
+resource "aws_iam_role" "karpenter_pod_role" {
+  name = "${var.project_name}-${var.environment}-karpenter-pod-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+
+    Statement = [
+      {
+        Effect = "Allow"
+
+        Principal = {
+          Service = "pods.eks.amazonaws.com"
+        }
+
+        Action = [
+          "sts:AssumeRole",
+          "sts:TagSession"
+        ]
+      }
+    ]
+  })
+}
+
+resource "aws_iam_policy" "karpenter_policy" {
+  name = "${var.project_name}-${var.environment}-karpenter-controller"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+
+    Statement = [
+      {
+        Effect = "Allow"
+
+        Action = [
+          #placeholder
+        ]
+
+        Resource = "*" # placeholder 
+      }
+    ]
+  })
+}
+
+
+resource "aws_iam_role_policy_attachment" "karpenter_attachment" {
+  role       = aws_iam_role.karpenter_pod_role.name
+  policy_arn = aws_iam_policy.karpenter_policy.arn
+}
+
+resource "aws_eks_pod_identity_association" "karpenter" {
+  cluster_name    = var.cluster_name
+  namespace       = "kube-system"
+  service_account = "karpenter"
+  role_arn        = aws_iam_role.karpenter_pod_role.arn
 }

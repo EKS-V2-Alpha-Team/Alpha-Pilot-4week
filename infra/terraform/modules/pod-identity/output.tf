@@ -10,7 +10,7 @@ output "order_service_sqs_role_arn" {
 
 output "worker_sqs_role_arn" {
   description = "ARN of the sqs worker pod identity role"
-  value = aws_iam_role.worker_sqs_pod_role.arn
+  value       = aws_iam_role.worker_sqs_pod_role.arn
 }
 
 output "external_dns_role_arn" {

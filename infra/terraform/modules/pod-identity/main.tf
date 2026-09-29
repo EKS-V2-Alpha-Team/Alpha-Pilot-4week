@@ -305,7 +305,7 @@ resource "aws_iam_policy" "karpenter_policy" {
           #placeholder
         ]
 
-        Resource = "*" # placeholder 
+        Resource = "*" # placeholder
       }
     ]
   })

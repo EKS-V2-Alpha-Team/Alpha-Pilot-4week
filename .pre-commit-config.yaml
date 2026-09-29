@@ -12,17 +12,17 @@ repos:
     hooks:
      -  id: check-yaml
      -  id: end-of-file-fixer
-     -  id: trailing-whitespace  
+     -  id: trailing-whitespace
      -  id: check-merge-conflict
      -  id: check-added-large-files
 
 
   - repo: https://github.com/bridgecrewio/checkov.git
-    rev: v3.3.19
+    rev: 3.3.19
     hooks:
      - id: checkov_diff
-       entry: checkov --framework terraform 
-       args: 
+       entry: checkov --framework terraform
+       args:
          - '--soft-fail'
          - '-f'
        files: \.tf$

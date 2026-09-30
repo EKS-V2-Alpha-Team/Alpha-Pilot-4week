@@ -35,7 +35,10 @@ resource "aws_iam_policy" "secrets_manager_read" {
           "secretsmanager:GetSecretValue"
         ]
 
-        Resource = var.db_secret_arn
+        Resource = [
+          var.db_secret_arn,
+          var.grafana_secret_arn
+        ]
       },
       {
         Effect = "Allow"

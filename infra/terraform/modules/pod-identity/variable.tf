@@ -14,6 +14,10 @@ variable "db_secret_arn" {
   type        = string
 }
 
+variable "grafana_secret_arn" {
+  description = "ARN of the Grafana password secret"
+  type        = string
+}
 
 variable "kms_key_arn" {
   description = "ARN of the KMS key used to encrypt secrets"

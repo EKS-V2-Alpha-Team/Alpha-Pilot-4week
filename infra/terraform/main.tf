@@ -31,6 +31,7 @@ module "pod-identity" {
   aws_region           = var.aws_region
   worker_node_role_arn = module.eks.node_role_arn
   sqs_queue_arn        = module.sqs.queue_arn
+
 }
 
 module "secrets_manager" {
@@ -56,13 +57,4 @@ module "rds" {
   db_subnet_group_name      = module.vpc.db_subnet_group_name
   kms_key_arn               = module.secrets_manager.kms_key_arn
   allowed_security_group_id = module.eks.cluster_security_group_id
-  instance_class            = var.instance_class
-  allocated_storage         = var.allocated_storage
-  max_allocated_storage     = var.max_allocated_storage
-  multi_az                  = var.multi_az
-  backup_retention_period   = var.backup_retention_period
-  deletion_protection       = var.deletion_protection
-  delete_automated_backups  = var.delete_automated_backups
-  skip_final_snapshot       = var.skip_final_snapshot
-  apply_immediately         = var.apply_immediately
 }

@@ -63,11 +63,6 @@ variable "db_name" {
   default     = "orders"
 }
 
-variable "allowed_security_group_id" {
-  description = "Security group allowed to reach postgres"
-  type        = string
-}
-
 variable "engine_version" {
   description = "Postgres MAJOR version only"
   type        = string

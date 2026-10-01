@@ -73,9 +73,9 @@ For large changes, please open an issue to discuss before writing code.
 
    | You changed... | Run | What it checks |
    | --- | --- | --- |
-   | Terraform (platform infrastructure) | `make tf-fmt tf-validate tf-plan` | Formatting, validity and the plan against floci (emulated AWS) |
-   | Service code | `make compose-up` | The whole app runs end to end with Docker Compose + floci, including queues and secrets |
-   | Helm chart, values or Kubernetes config | `make helm-lint helm-template`, then `make local-up` | Quick chart checks, then all nine services, Postgres and Redis running in a local kind cluster |
+   | Terraform (platform infrastructure) | TBC | Formatting, validity and the plan against floci (emulated AWS) |
+   | Service code | `make up` | The whole app runs end to end with Docker Compose + floci, including queues and secrets |
+   | Helm chart, values or Kubernetes config | TBC | Quick chart checks, then all nine services, Postgres and Redis running in a local kind cluster |
 
    Please don't test against real AWS. Mention in your PR which make commands you ran.
 4. **Open a pull request** into `main` explaining what changed, why, and how you tested it.

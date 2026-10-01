@@ -1,4 +1,6 @@
 SHELL := /bin/bash
+KIND_CLUSTER := team-alpha
+KIND_CONFIG  := infra/kind/cluster.yaml
 
 # Target one service:  make test SERVICE=order-service
 SERVICE ?=
@@ -40,3 +42,13 @@ down: ## Stop everything, or one (SERVICE=name)
 .PHONY: logs
 logs: ## Tail logs (SERVICE=name for one)
 	docker compose logs -f $(SERVICE)
+
+.PHONY: cluster-up
+cluster-up: ## Create the local kind cluster
+	@kind get clusters | grep -qx $(KIND_CLUSTER) || kind create cluster --config $(KIND_CONFIG)
+	kubectl --context kind-$(KIND_CLUSTER) wait --for=condition=Ready nodes --all --timeout=120s
+	kubectl --context kind-$(KIND_CLUSTER) get nodes
+ 
+.PHONY: cluster-down
+cluster-down: ## Delete the local kind cluster
+	kind delete cluster --name $(KIND_CLUSTER)

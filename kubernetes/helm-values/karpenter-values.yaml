@@ -1,0 +1,15 @@
+settings:
+  clusterName: eks-v2-dev-cluster
+
+serviceAccount:
+  create: true
+  name: karpenter
+
+controller:
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi

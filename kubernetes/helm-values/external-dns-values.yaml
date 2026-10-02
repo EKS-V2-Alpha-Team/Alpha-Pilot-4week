@@ -1,0 +1,17 @@
+provider:
+  name: aws
+
+policy: upsert-only
+
+registry: txt
+txtOwnerId: eks-v2-dev-cluster
+
+sources:
+  - ingress
+
+domainFilters:
+  - REPLACE_WITH_TEAM_DOMAIN
+
+serviceAccount:
+  create: true
+  name: external-dns

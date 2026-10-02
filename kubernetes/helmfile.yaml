@@ -1,0 +1,58 @@
+repositories:
+  - name: traefik
+    url: https://traefik.github.io/charts
+
+  - name: jetstack
+    url: https://charts.jetstack.io
+
+  - name: external-dns
+    url: https://kubernetes-sigs.github.io/external-dns
+
+  - name: argo
+    url: https://argoproj.github.io/argo-helm
+
+  - name: prometheus-community
+    url: https://prometheus-community.github.io/helm-charts
+
+releases:
+  - name: traefik
+    namespace: traefik
+    createNamespace: true
+    chart: traefik/traefik
+    version: 41.6.0  
+    values:
+      - helm-values/traefik-values.yaml
+
+  - name: cert-manager
+    namespace: cert-manager
+    createNamespace: true
+    chart: jetstack/cert-manager
+    values:
+      - helm-values/cert-manager-values.yaml
+
+  - name: external-dns
+    namespace: external-dns
+    createNamespace: true
+    chart: external-dns/external-dns
+    values:
+      - helm-values/external-dns-values.yaml
+
+  - name: argocd
+    namespace: argocd
+    createNamespace: true
+    chart: argo/argo-cd
+    values:
+      - helm-values/argocd-values.yaml
+
+  - name: prometheus
+    namespace: monitoring
+    createNamespace: true
+    chart: prometheus-community/kube-prometheus-stack
+    values:
+      - helm-values/prometheus-values.yaml
+
+  - name: karpenter
+    namespace: kube-system
+    chart: oci://public.ecr.aws/karpenter/karpenter
+    values:
+      - helm-values/karpenter-values.yaml

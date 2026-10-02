@@ -1,0 +1,7 @@
+clusterName: eks-v2-dev-cluster
+region: eu-west-2
+vpcId: REPLACE_WITH_VPC_ID
+
+serviceAccount:
+  create: true
+  name: aws-load-balancer-controller

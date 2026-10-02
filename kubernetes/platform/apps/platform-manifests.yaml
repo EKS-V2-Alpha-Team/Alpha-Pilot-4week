@@ -1,22 +1,19 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
-
 metadata:
-  name: cluster-issuer
+  name: platform-manifests
   namespace: argocd
-
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
 spec:
   project: default
-
   source:
-    repoURL: https://github.com/EKS-V2-Alpha-Team/Alpha-Pilot-4week.git
+    repoURL: git@github.com:EKS-V2-Alpha-Team/Alpha-Pilot-4week.git
     targetRevision: main
-    path: kubernetes/cert-manager
-
+    path: kubernetes/platform/manifests
   destination:
     server: https://kubernetes.default.svc
-    namespace: cert-manager
-
+    namespace: argocd
   syncPolicy:
     automated:
       prune: true

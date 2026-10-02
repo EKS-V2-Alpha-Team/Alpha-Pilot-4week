@@ -1,0 +1,19 @@
+# Applied once by hand after ArgoCD is installed. ArgoCD installs everything in apps/.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: git@github.com:EKS-V2-Alpha-Team/Alpha-Pilot-4week.git
+    targetRevision: main
+    path: kubernetes/platform/apps
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

@@ -19,6 +19,11 @@ variable "grafana_secret_arn" {
   type        = string
 }
 
+variable "jwt_secret_arn" {
+  description = "ARN of the api-gateway JWT signing secret"
+  type        = string
+}
+
 variable "kms_key_arn" {
   description = "ARN of the KMS key used to encrypt secrets"
   type        = string
@@ -31,14 +36,14 @@ variable "cluster_name" {
 
 variable "secrets_manager_namespace" {
   type        = string
-  description = "Kubernetes namespace for workload that needs secrets manager"
-  default     = "secrets_manager" # we will need to specify the namespace  once we have figured out what we will name them - this is temporary
+  description = "Kubernetes namespace of External Secrets, which reads Secrets Manager"
+  default     = "external-secrets"
 }
 
 variable "secrets_manager_service_account" {
   type        = string
-  description = "Kubernetes svc account for workload that needs secrets manager"
-  default     = "secrets_manager" # we will need to specify the svc account once we have figured out what we will name them - this is temporary
+  description = "Kubernetes service account of External Secrets"
+  default     = "external-secrets"
 }
 
 variable "aws_region" {

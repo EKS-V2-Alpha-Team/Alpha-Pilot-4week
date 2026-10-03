@@ -19,7 +19,7 @@ variable "environment" {
 variable "github_org" {
   description = "GitHub organisation or username"
   type        = string
-  default     = "Jawwad78"
+  default     = "EKS-V2-Alpha-Team"
 }
 
 variable "github_repo" {
@@ -35,3 +35,12 @@ variable "aws_region" {
   default     = "eu-west-2"
 }
 
+variable "github_org_id" {
+  type    = string
+  default = "331815569"
+}
+
+variable "github_repo_id" {
+  type    = string
+  default = "1373024865"
+}

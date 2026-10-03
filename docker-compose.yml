@@ -45,11 +45,18 @@ services:
     build: ./services/api-gateway
     ports:
       - "8080:8080"
+      - "9091:9090"   # Prometheus metrics (separate port, never routed)
     environment:
       <<: *service-urls
       REDIS_URL: redis://redis:6379
       JWT_SECRET: local-dev-secret
       DASHBOARD_SERVICE_URL: http://dashboard-api:8086
+      # Rate limits per window (defaults shown). No proxy locally, so no trusted proxies.
+      RATE_LIMIT_WINDOW_SECONDS: "60"
+      RATE_LIMIT_USER_PER_WINDOW: "120"
+      RATE_LIMIT_IP_PER_WINDOW: "60"
+      RATE_LIMIT_SENSITIVE_PER_WINDOW: "20"
+      TRUSTED_PROXY_CIDRS: ""
     depends_on:
       - redis
 
@@ -59,6 +66,7 @@ services:
       - "8081:8081"
     environment:
       <<: [*database-env, *floci-env]
+      PGAPPNAME: order-service
     depends_on:
       - postgres
       - floci
@@ -67,8 +75,10 @@ services:
     build: ./services/inventory-service
     ports:
       - "8082:8082"
+      - "9092:9090"   # Prometheus metrics (separate port, not routed by api-gateway)
     environment:
       <<: *database-env
+      PGAPPNAME: inventory-service
     depends_on:
       - postgres
 
@@ -78,6 +88,7 @@ services:
       - "8083:8083"
     environment:
       <<: [*database-env, *floci-env]
+      PGAPPNAME: payment-service
     depends_on:
       - postgres
       - floci
@@ -88,6 +99,7 @@ services:
       - "8084:8084"
     environment:
       <<: *database-env
+      PGAPPNAME: notification-service
     depends_on:
       - postgres
 
@@ -97,6 +109,7 @@ services:
       - "8085:8085"
     environment:
       <<: [*database-env, *floci-env]
+      PGAPPNAME: shipping-service
     depends_on:
       - postgres
       - floci
@@ -112,6 +125,7 @@ services:
     build: ./services/scheduler
     environment:
       <<: *database-env
+      PGAPPNAME: scheduler
     depends_on:
       - postgres
 
@@ -121,6 +135,7 @@ services:
       - "8086:8086"
     environment:
       <<: *database-env
+      PGAPPNAME: dashboard-api
     depends_on:
       - postgres
 

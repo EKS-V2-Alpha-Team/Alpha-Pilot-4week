@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"math"
 	"math/rand"
 	"net/http"
 	"os"
@@ -14,7 +16,7 @@ import (
 	"syscall"
 	"time"
 
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 )
 
 var db *sql.DB
@@ -90,6 +92,11 @@ func migrate() {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_payments_order ON payments(order_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_payments_customer ON payments(customer_id)`,
+		// At most one completed charge per order, so a repeated /charge (e.g. SQS delivering
+		// the same message twice) can't take the money twice (ALPHA-51). Refunds are stored
+		// as their own completed rows for the same order, so they are left out.
+		`CREATE UNIQUE INDEX IF NOT EXISTS uq_payments_one_completed_charge
+			ON payments(order_id) WHERE status = 'completed' AND method IS DISTINCT FROM 'refund'`,
 		`CREATE TABLE IF NOT EXISTS ledger_entries (
 			id SERIAL PRIMARY KEY,
 			payment_id VARCHAR(50) NOT NULL REFERENCES payments(id),
@@ -142,6 +149,11 @@ func handleCharge(w http.ResponseWriter, r *http.Request) {
 		httpError(w, "amount must be positive", http.StatusBadRequest)
 		return
 	}
+	if req.Method == "refund" {
+		// "refund" marks refund rows; a charge using it would slip past the one-charge rule.
+		httpError(w, "method \"refund\" is reserved for refunds", http.StatusBadRequest)
+		return
+	}
 
 	paymentID := generatePaymentID()
 	currency := req.Currency
@@ -149,11 +161,12 @@ func handleCharge(w http.ResponseWriter, r *http.Request) {
 		currency = "GBP"
 	}
 
-	// Simulate payment processing (90% success rate)
-	status := "completed"
-	if rand.Intn(10) == 0 {
-		status = "failed"
+	// Idempotent: an order that is already paid is never charged again.
+	if replyIfAlreadyPaid(w, req.OrderID, req.CustomerID, req.Amount, currency) {
+		return
 	}
+
+	status := processPayment()
 
 	tx, err := db.Begin()
 	if err != nil {
@@ -168,6 +181,14 @@ func handleCharge(w http.ResponseWriter, r *http.Request) {
 		paymentID, req.OrderID, req.CustomerID, req.Amount, currency, status, req.Method,
 	)
 	if err != nil {
+		if isUniqueViolation(err) {
+			// A concurrent request for the same order completed first. Ours rolls back,
+			// so nothing is charged twice; answer the way a repeat would be answered.
+			tx.Rollback()
+			if replyIfAlreadyPaid(w, req.OrderID, req.CustomerID, req.Amount, currency) {
+				return
+			}
+		}
 		httpError(w, "failed to process payment", http.StatusInternalServerError)
 		return
 	}
@@ -186,7 +207,12 @@ func handleCharge(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 
-	tx.Commit()
+	if err := tx.Commit(); err != nil {
+		// Before this check the handler answered 201 and published payment.completed
+		// even when nothing was saved.
+		httpError(w, "failed to process payment", http.StatusInternalServerError)
+		return
+	}
 
 	// Publish event
 	publishEvent("payment."+status, map[string]interface{}{
@@ -212,6 +238,62 @@ func handleCharge(w http.ResponseWriter, r *http.Request) {
 		"currency":   currency,
 		"status":     status,
 	})
+}
+
+// processPayment simulates the payment provider (90% success rate).
+// It is a variable so tests can make the outcome deterministic.
+var processPayment = func() string {
+	if rand.Intn(10) == 0 {
+		return "failed"
+	}
+	return "completed"
+}
+
+// replyIfAlreadyPaid answers for an order that already has a completed charge and
+// reports whether it did. Same customer, amount and currency means the request is a
+// repeat: 200 with the existing payment. Anything different is a caller bug: 409.
+func replyIfAlreadyPaid(w http.ResponseWriter, orderID int, customerID string, amount float64, currency string) bool {
+	var paymentID, paidCustomer, paidCurrency string
+	var paidAmount float64
+	err := db.QueryRow(
+		`SELECT id, customer_id, amount, currency FROM payments
+		 WHERE order_id = $1 AND status = 'completed' AND method IS DISTINCT FROM 'refund'`,
+		orderID,
+	).Scan(&paymentID, &paidCustomer, &paidAmount, &paidCurrency)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false
+	}
+	if err != nil {
+		httpError(w, "payment lookup failed", http.StatusInternalServerError)
+		return true
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if paidCustomer != customerID || paidCurrency != currency || math.Abs(paidAmount-amount) >= 0.005 {
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error":      "order already paid with different details",
+			"payment_id": paymentID,
+			"order_id":   orderID,
+		})
+		return true
+	}
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"payment_id":   paymentID,
+		"order_id":     orderID,
+		"amount":       paidAmount,
+		"currency":     paidCurrency,
+		"status":       "completed",
+		"already_paid": true,
+	})
+	return true
+}
+
+// isUniqueViolation reports whether err is Postgres error 23505 (unique_violation).
+func isUniqueViolation(err error) bool {
+	var pqErr *pq.Error
+	return errors.As(err, &pqErr) && pqErr.Code == "23505"
 }
 
 func handleRefund(w http.ResponseWriter, r *http.Request) {

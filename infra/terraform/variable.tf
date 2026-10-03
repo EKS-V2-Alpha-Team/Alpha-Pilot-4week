@@ -11,9 +11,14 @@ variable "project_name" {
 }
 
 variable "environment" {
-  description = "Environment name (dev, staging, prod)"
+  description = "Deployment environment."
   type        = string
   default     = "dev"
+
+  validation {
+    condition     = contains(["dev", "staging", "prod"], var.environment)
+    error_message = "environment must be one of: dev, staging, prod."
+  }
 }
 
 variable "vpc_cidr" {
@@ -44,4 +49,10 @@ variable "azs" {
   description = "Availability zones to create subnets in"
   type        = list(string)
   default     = ["eu-west-2a", "eu-west-2b", "eu-west-2c"]
+}
+
+variable "cluster_admin_principal_arns" {
+  description = "IAM user/role ARNs to grant EKS cluster admin access via access entries"
+  type        = list(string)
+  default     = []
 }

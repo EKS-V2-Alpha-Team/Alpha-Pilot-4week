@@ -25,6 +25,8 @@ services/worker/worker
 *.tfvars
 .terraform.lock.hcl
 
+
+
 # Kubernetes
 kubeconfig
 *.kubeconfig

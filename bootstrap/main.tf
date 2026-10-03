@@ -108,6 +108,8 @@ resource "aws_iam_role" "github_actions" {
     oidc_provider_arn = aws_iam_openid_connect_provider.github.arn
     github_org        = var.github_org
     github_repo       = var.github_repo
+    github_org_id     = var.github_org_id
+    github_repo_id    = var.github_repo_id
   })
 
   tags = {

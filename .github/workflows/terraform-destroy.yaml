@@ -1,0 +1,131 @@
+name: Terraform Destroy
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    types: [labeled]
+
+env:
+  TF_WORKING_DIR: infra/terraform
+  TF_VERSION: "1.16.3"
+
+concurrency:
+  group: terraform-state
+  cancel-in-progress: false
+
+jobs:
+  destroy-plan:
+    name: Terraform Destroy Plan
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'destroy'
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: write
+
+    defaults:
+      run:
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ secrets.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Initialize Terraform
+        run: |
+          echo "Initialising terraform..."
+          terraform init -input=false
+
+      - name: Terraform Destroy Plan
+        run: |
+          echo "Running terraform destroy plan..."
+          terraform plan -destroy -input=false -out=destroy.tfplan
+
+      - name: Upload destroy plan artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: tfplan-destroy
+          path: ${{ env.TF_WORKING_DIR }}/destroy.tfplan
+          retention-days: 5
+
+      - name: Post destroy plan comment
+        if: github.event_name == 'pull_request'
+        uses: borchero/terraform-plan-comment@v2
+        with:
+          token: ${{ github.token }}
+          planfile: destroy.tfplan
+          working-directory: ${{ env.TF_WORKING_DIR }}
+          header: terraform destroy plan
+
+      - name: Add destroy plan to run summary
+        run: |
+          echo "Writing the destroy plan to the run summary..."
+          {
+            echo "## Terraform destroy plan"
+            echo '```'
+            terraform show -no-color destroy.tfplan
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  destroy:
+    name: Terraform Destroy
+    needs: destroy-plan
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    # Approval gate: waits until a required reviewer of this environment approves the run
+    environment: terraform-destroy
+
+    permissions:
+      id-token: write
+      contents: read
+
+    defaults:
+      run:
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ secrets.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Initialize Terraform
+        run: |
+          echo "Initialising terraform..."
+          terraform init -input=false
+
+      - name: Download destroy plan
+        uses: actions/download-artifact@v7
+        with:
+          name: tfplan-destroy
+          path: ${{ env.TF_WORKING_DIR }}
+
+      - name: Terraform Destroy
+        run: |
+          echo "Destroying the resources in the approved plan..."
+          terraform apply -input=false destroy.tfplan
+          echo "Destroy complete ✅"

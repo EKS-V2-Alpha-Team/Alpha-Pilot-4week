@@ -1,0 +1,10 @@
+clusterName: eks-v2-dev-cluster
+region: eu-west-2
+# Set explicitly so the controller doesn't depend on the node metadata service.
+# Fill from: terraform -chdir=infra/terraform output -raw vpc_id
+vpcId: REPLACE_WITH_VPC_ID
+
+# Must match the Pod Identity association in Terraform (kube-system / aws-load-balancer-controller).
+serviceAccount:
+  create: true
+  name: aws-load-balancer-controller

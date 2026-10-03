@@ -1,0 +1,35 @@
+prometheus:
+  prometheusSpec:
+    # 24h on 20Gi is enough to debug a test cycle, not for trends.
+    retention: 24h
+    # Collect every ServiceMonitor, including the apps' (they have no release label).
+    serviceMonitorSelectorNilUsesHelmValues: false
+
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: "gp2"
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 20Gi
+
+alertmanager:
+  alertmanagerSpec:
+    storage: {}
+
+# Don't add a datasource: the chart already adds the default Prometheus one,
+# and two defaults stop Grafana from starting.
+grafana:
+  enabled: true
+
+  service:
+    type: ClusterIP
+
+  adminUser: admin
+
+kubeStateMetrics:
+  enabled: true
+
+nodeExporter:
+  enabled: true

@@ -22,3 +22,8 @@ output "cert_manager_role_arn" {
   description = "ARN of the cert manager pod identity role"
   value       = aws_iam_role.cert_manager_pod_role.arn
 }
+
+output "aws_load_balancer_controller_role_arn" {
+  description = "ARN of the aws load balancer controller pod identity role"
+  value       = aws_iam_role.aws_load_balancer_controller_pod_role.arn
+}

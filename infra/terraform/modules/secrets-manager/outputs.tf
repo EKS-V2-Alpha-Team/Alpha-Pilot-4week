@@ -7,3 +7,8 @@ output "kms_key_arn" {
   description = "ARN of the KMS key used to encrypt secrets"
   value       = aws_kms_key.secret_encryption.arn
 }
+
+output "jwt_secret_arn" {
+  description = "ARN of the api-gateway JWT signing secret"
+  value       = aws_secretsmanager_secret.jwt_secret.arn
+}

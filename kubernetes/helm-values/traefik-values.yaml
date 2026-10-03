@@ -1,0 +1,44 @@
+deployment:
+  replicas: 2
+
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+          topologyKey: kubernetes.io/hostname
+
+ingressClass:
+  enabled: true
+  isDefaultClass: false
+  name: traefik
+
+service:
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
+    service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+    # ip targets drop the client IP by default; api-gateway rate-limits per client IP.
+    service.beta.kubernetes.io/aws-load-balancer-target-group-attributes: preserve_client_ip.enabled=true
+    # ExternalDNS (service source) points this name at the NLB. Must equal the
+    # api-gateway ingressRoute.host in the app chart's dev values.
+    external-dns.alpha.kubernetes.io/hostname: dashboard.dev.REPLACE_WITH_TEAM_DOMAIN
+  spec:
+    loadBalancerClass: service.k8s.aws/nlb
+
+ports:
+  web:
+    port: 8000
+    expose:
+      default: true
+    exposedPort: 80
+    protocol: TCP
+
+  websecure:
+    port: 8443
+    expose:
+      default: true
+    exposedPort: 443
+    protocol: TCP

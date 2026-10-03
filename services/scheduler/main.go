@@ -36,6 +36,7 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	startMetricsServer(getEnv("METRICS_PORT", "9090"))
 
 	// Health check
 	go func() {
@@ -84,7 +85,7 @@ func runEvery(ctx context.Context, interval time.Duration, name string, fn func(
 
 	// Run immediately on start
 	log.Printf("Running job: %s", name)
-	fn()
+	runJob(name, fn) 
 
 	for {
 		select {
@@ -93,7 +94,7 @@ func runEvery(ctx context.Context, interval time.Duration, name string, fn func(
 		case <-ticker.C:
 			log.Printf("Running job: %s", name)
 			start := time.Now()
-			fn()
+			runJob(name, fn) 
 			log.Printf("Job '%s' completed in %s", name, time.Since(start))
 		}
 	}

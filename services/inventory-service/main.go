@@ -74,7 +74,7 @@ func main() {
 	port := getEnv("PORT", "8082")
 	server := &http.Server{
 		Addr:         ":" + port,
-		Handler:      mux,
+		Handler: instrument(mux),
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  120 * time.Second,

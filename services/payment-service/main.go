@@ -39,7 +39,8 @@ func main() {
 	db.SetConnMaxLifetime(5 * time.Minute)
 	waitForDB()
 	migrate()
-
+      	
+	startMetricsServer(getEnv("METRICS_PORT", "9090"))
 	mux := http.NewServeMux()
 	mux.HandleFunc("/livez", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("/healthz", handleHealth)
@@ -51,7 +52,7 @@ func main() {
 	port := getEnv("PORT", "8083")
 	server := &http.Server{
 		Addr:         ":" + port,
-		Handler:      mux,
+		Handler:      instrument(mux),
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  120 * time.Second,

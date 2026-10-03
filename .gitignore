@@ -45,3 +45,7 @@ Thumbs.db
 .env
 .env.*
 *.pem
+
+# Local Floci testing
+/infra/terraform/local/
+/scripts/floci-local-test.sh

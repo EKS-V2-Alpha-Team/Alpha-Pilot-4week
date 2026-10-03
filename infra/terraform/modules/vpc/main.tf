@@ -40,6 +40,8 @@ resource "aws_subnet" "private" {
   tags = {
     Name                              = "${var.project_name}-private-subnet-${count.index + 1}"
     "kubernetes.io/role/internal-elb" = "1"
+    # Karpenter launches nodes in subnets with this tag. Must match the cluster name in karpenter-ec2nodeclass.yaml
+    "karpenter.sh/discovery" = "eks-v2-dev-cluster"
   }
 }
 

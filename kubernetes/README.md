@@ -7,7 +7,7 @@ Cluster tools the apps depend on. ArgoCD is installed once by hand; ArgoCD insta
 | `helmfile.yaml` + `helm-values/argocd-values.yaml` | ArgoCD, installed by hand once |
 | `platform/root-app.yaml` | Root app, applied by hand once; points at `platform/apps/` |
 | `platform/apps/` | One ArgoCD Application per tool: upstream chart at a pinned version + our values file |
-| `platform/manifests/` | Our own cluster resources (ClusterIssuers, ClusterSecretStore) |
+| `platform/manifests/` | Our own cluster resources (ClusterIssuers, ClusterSecretStore, Karpenter EC2NodeClass + NodePool) |
 | `helm-values/` | Values for every chart. Non-obvious settings are explained inline |
 
 ## Tools
@@ -19,7 +19,7 @@ Cluster tools the apps depend on. ArgoCD is installed once by hand; ArgoCD insta
 | cert-manager | Gets Let's Encrypt certificates | -3 |
 | Karpenter | Adds EC2 nodes when pods don't fit | -3 |
 | metrics-server | CPU/memory numbers for the HPA | -3 |
-| `platform/manifests/` | ClusterIssuers, ClusterSecretStore (need the CRDs from wave -3) | -2 |
+| `platform/manifests/` | ClusterIssuers, ClusterSecretStore, Karpenter EC2NodeClass + NodePool (need the CRDs from wave -3) | -2 |
 | Traefik | Routes requests to services | -1 |
 | ExternalDNS | Points the domain at the NLB in Route 53 | -1 |
 | Reloader | Restarts pods when a secret rotates | -1 |
@@ -92,7 +92,6 @@ kubectl get clusterissuer                             # both READY True
 
 ## Known gaps
 
-- Karpenter won't add nodes until the subnets and cluster security group carry the `karpenter.sh/discovery` tag (ALPHA-64).
 - Not installed yet: gp3 default StorageClass, VolumeSnapshotClass + snapshot-controller, Redis.
 - Grafana generates its own admin password; the Secrets Manager one isn't wired in yet.
 

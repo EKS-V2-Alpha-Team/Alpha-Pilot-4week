@@ -1,0 +1,36 @@
+apiVersion: karpenter.k8s.aws/v1
+kind: EC2NodeClass
+metadata:
+  name: default
+spec:
+  role: eks-v2-dev-node-role
+
+  amiSelectorTerms:
+    - alias: al2023@v20260930
+
+  subnetSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: eks-v2-dev-cluster
+
+  securityGroupSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: eks-v2-dev-cluster
+
+  blockDeviceMappings:
+    - deviceName: /dev/xvda
+      ebs:
+        volumeSize: 30Gi
+        volumeType: gp3
+        encrypted: true
+        deleteOnTermination: true
+
+  # pods can't reach the node's IAM role, so they must use their own Pod Identity role.
+  metadataOptions:
+    httpEndpoint: enabled
+    httpTokens: required
+    httpPutResponseHopLimit: 1
+
+  tags:
+    Project: eks-v2
+    Environment: dev
+    ManagedBy: Karpenter

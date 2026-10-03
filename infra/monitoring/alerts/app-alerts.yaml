@@ -1,0 +1,62 @@
+groups:
+  - name: app-alerts
+    rules:
+      # Metrics stopped arriving. All other alerts for this service go quiet.
+      - alert: ServiceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.job }} is not exposing metrics"
+
+      # Users are getting errors. Threshold is a placeholder until SLOs are agreed.
+      - alert: HighErrorRate
+        expr: |
+          sum by (job) (rate(http_requests_total{status_code=~"5.."}[5m]))
+            / sum by (job) (rate(http_requests_total[5m]))
+          > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.job }} 5xx ratio above 5%"
+
+      # Users are waiting. Threshold is a placeholder until SLOs are agreed.
+      - alert: HighLatencyP95
+        expr: |
+          histogram_quantile(0.95,
+            sum by (job, le) (rate(http_request_duration_seconds_bucket[5m])))
+          > 0.5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.job }} p95 latency above 500ms"
+
+      # A scheduled task silently stopped. Threshold = 3x each task's interval.
+      - alert: SchedulerTaskStale
+        expr: |
+          (time() - scheduler_job_last_completed_timestamp_seconds{task="expire_reservations"}) > 180
+          or (time() - scheduler_job_last_completed_timestamp_seconds{task="abandoned_carts"}) > 900
+          or (time() - scheduler_job_last_completed_timestamp_seconds{task="retry_failed_payments"}) > 2700
+          or (time() - scheduler_job_last_completed_timestamp_seconds{task="cleanup_old_events"}) > 5400
+          or (time() - scheduler_job_last_completed_timestamp_seconds{task="daily_digest"}) > 10800
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Scheduler task {{ $labels.task }} has not completed recently"
+
+      # Events are failing and orders may be stuck.
+      - alert: WorkerEventFailures
+        expr: |
+          sum(increase(worker_events_total{result=~"handle_failed|parse_failed"}[10m])) > 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Worker has had repeated event failures in the last 10 minutes"
+
+      # CrashLooping needs Kubernetes (kube-state-metrics). Added with the cluster:
+      # increase(kube_pod_container_status_restarts_total[15m]) > 3

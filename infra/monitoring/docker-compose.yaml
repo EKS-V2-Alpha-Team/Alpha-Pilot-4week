@@ -1,0 +1,29 @@
+# Local observability stack. Run alongside the main compose file:
+# docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
+# Kept separate so the team's main docker-compose.yml is unchanged.
+
+services:
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yaml
+      - --storage.tsdb.retention.time=2d
+      - --web.enable-lifecycle          # lets you reload config without restarting
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
+      - ./monitoring/alerts:/etc/prometheus/alerts:ro
+
+  grafana:
+    image: grafana/grafana:12.1.0
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin   # local only
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards
+    depends_on:
+      - prometheus

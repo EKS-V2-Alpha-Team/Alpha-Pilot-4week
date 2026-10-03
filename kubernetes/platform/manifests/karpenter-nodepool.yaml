@@ -1,15 +1,12 @@
 apiVersion: karpenter.sh/v1
 kind: NodePool
-
 metadata:
   name: default
-
 spec:
   template:
     metadata:
       labels:
         workload: general
-
     spec:
       nodeClassRef:
         group: karpenter.k8s.aws
@@ -20,22 +17,24 @@ spec:
         - key: kubernetes.io/arch
           operator: In
           values: ["amd64"]
-
         - key: kubernetes.io/os
           operator: In
           values: ["linux"]
-
+        # On-demand only for now. Spot needs a separate NodePool and an interruption queue.
         - key: karpenter.sh/capacity-type
           operator: In
           values: ["on-demand"]
-
+        # c = compute, m = general purpose, r = memory optimised
         - key: karpenter.k8s.aws/instance-category
           operator: In
           values: ["c", "m", "r"]
-
         - key: karpenter.k8s.aws/instance-generation
           operator: Gt
           values: ["4"]
+        # Small nodes only in dev: cheaper, and better packing for small services.
+        - key: karpenter.k8s.aws/instance-cpu
+          operator: In
+          values: ["2", "4", "8"]
 
       expireAfter: 720h
 
@@ -47,4 +46,4 @@ spec:
     consolidationPolicy: WhenEmptyOrUnderutilized
     consolidateAfter: 5m
     budgets:
-      - nodes: "10%"
+      - nodes: "1"

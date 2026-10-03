@@ -1,6 +1,7 @@
 provider:
   name: aws
 
+# Creates and updates records, never deletes them.
 policy: upsert-only
 
 registry: txt
@@ -9,10 +10,16 @@ txtOwnerId: eks-v2-dev-cluster
 sources:
   - ingress
   - traefik-proxy
+  - service
 
+# The Route 53 hosted zone name (e.g. orders.<domain>), not the full hostname.
 domainFilters:
   - REPLACE_WITH_TEAM_DOMAIN
 
+extraArgs:
+  - --aws-zone-type=public
+
+# Must match the Pod Identity association in Terraform (external-dns / external-dns).
 serviceAccount:
   create: true
   name: external-dns

@@ -4,6 +4,8 @@ server:
 
 configs:
   cm:
+    # ArgoCD stopped reporting child Application health in v1.8. Without this
+    # check, sync waves don't wait for the previous wave to be healthy.
     resource.customizations.health.argoproj.io_Application: |
       hs = {}
       hs.status = "Progressing"

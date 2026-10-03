@@ -63,26 +63,26 @@ variable "sqs_queue_arn" {
 
 variable "order_service_namespace" {
   type        = string
-  default     = "order-service" #placeholder
-  description = "this is the order service app namespace"
+  default     = "order-platform"
+  description = "Namespace the app chart deploys order-service into (all 9 services share it)"
 }
 
 variable "order_service_service_account" {
   type        = string
-  default     = "order-service" #placeholder
-  description = "this is the order service app svc account"
+  default     = "order-service"
+  description = "order-service ServiceAccount; the app chart names it after the release"
 }
 
 variable "worker_namespace" {
   type        = string
-  default     = "worker" #placeholder
-  description = "this is the worker app namespace"
+  default     = "order-platform"
+  description = "Namespace the app chart deploys worker into (all 9 services share it)"
 }
 
 variable "worker_service_account" {
   type        = string
-  default     = "worker" #placeholder
-  description = "this is the worker app svc account"
+  default     = "worker"
+  description = "worker ServiceAccount; the app chart names it after the release"
 }
 
 variable "route53_hosted_zone_arn" {

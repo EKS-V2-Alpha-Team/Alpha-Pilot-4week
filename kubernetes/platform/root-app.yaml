@@ -1,4 +1,5 @@
 # Applied once by hand after ArgoCD is installed. ArgoCD installs everything in apps/.
+# Every Application must use this same SSH repo URL so the ArgoCD deploy key matches.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

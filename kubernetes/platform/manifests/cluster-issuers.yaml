@@ -1,3 +1,5 @@
+# letsencrypt-staging: for testing (untrusted certificates, generous limits).
+# letsencrypt-prod: real certificates, strict rate limits. The app chart defaults to staging.
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 

@@ -1,11 +1,18 @@
 name: Application Pipeline
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
+    paths:
+      - "services/**"
+      - ".github/workflows/ci.yaml"
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened]
+    paths:
+      - "services/**"
+      - ".github/workflows/ci.yaml"
 
 permissions:
   id-token: write
@@ -18,7 +25,7 @@ jobs:
     name: Detect Changed Services
     runs-on: ubuntu-latest
     outputs:
-      services: ${{ steps.filter.outputs.changes }}
+      services: ${{ steps.result.outputs.services }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v6
@@ -32,17 +39,33 @@ jobs:
             echo "filters<<EOF"
             for dir in services/*/; do
               name=$(basename "$dir")
-              echo "${name}: 'services/${name}/**'"
+              echo "${name}:"
+              echo "  - 'services/${name}/**'"
+              echo "  - '.github/workflows/ci.yaml'"
             done
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
       - name: Filter changed paths
+        if: github.event_name != 'workflow_dispatch'
         uses: dorny/paths-filter@v3
         id: filter
         with:
           filters: ${{ steps.gen-filters.outputs.filters }}
           list-files: json
+
+      # Manual runs (workflow_dispatch) build every service
+      - name: Select services to build
+        id: result
+        env:
+          CHANGED: ${{ steps.filter.outputs.changes }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            services=$(ls -d services/*/ | xargs -n1 basename | jq -R . | jq -sc .)
+          else
+            services="$CHANGED"
+          fi
+          echo "services=${services}" >> "$GITHUB_OUTPUT"
 
   build-and-push:
     name: Build, Scan and Push Image
@@ -60,6 +83,20 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+          cache-dependency-path: services/${{ matrix.service }}/go.sum
+
+      - name: Run go vet
+        working-directory: services/${{ matrix.service }}
+        run: go vet ./...
+
+      - name: Run unit tests
+        working-directory: services/${{ matrix.service }}
+        run: go test -race -count=1 ./...
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v5

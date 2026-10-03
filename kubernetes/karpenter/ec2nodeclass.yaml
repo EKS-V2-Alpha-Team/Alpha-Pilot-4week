@@ -3,19 +3,19 @@ kind: EC2NodeClass
 metadata:
   name: default
 spec:
-  role: REPLACE_WITH_KARPENTER_NODE_ROLE
+  role: eks-v2-dev-node-role
 
   amiSelectorTerms:
-    - alias: al2023@latest
+    - alias: al2023@v20260930
 
   subnetSelectorTerms:
     - tags:
-        karpenter.sh/discovery: alpha-pilot-dev-cluster
+        karpenter.sh/discovery: eks-v2-dev-cluster
 
   securityGroupSelectorTerms:
     - tags:
-        karpenter.sh/discovery: alpha-pilot-dev-cluster
+        karpenter.sh/discovery: eks-v2-dev-cluster
 
   tags:
-    Project: Alpha-Pilot
+    Project: eks-v2
     ManagedBy: Karpenter

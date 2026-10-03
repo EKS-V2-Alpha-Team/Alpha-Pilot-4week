@@ -23,19 +23,24 @@ No taints are configured for this general-purpose
 NodePool. Workload isolation requirements are
 subject to team confirmation.
 
+The EC2NodeClass currently uses:
+- EKS cluster discovery name `eks-v2-dev-cluster`.
+- EC2 node IAM role `eks-v2-dev-node-role`.
+- Amazon Linux 2023 AMI release `al2023@v20260930`.
+- Project tag `eks-v2`.
+
 ## Outstanding Dependencies
 
-The following require confirmation:
+The following still require confirmation or implementation:
 
-- EKS cluster name.
-- EC2 node IAM role.
-- Compatible Amazon Linux 2023 AMI version.
-- Subnet and security group discovery tags.
-- Karpenter controller IAM permissions.
+- Matching subnet and security group discovery tags.
 - Deployment order and ArgoCD integration.
 
 The Karpenter controller is installed separately
 through ALPHA-62.
+
+Karpenter controller permissions are configured
+through EKS Pod Identity.
 
 ## Validation
 
@@ -51,11 +56,11 @@ Karpenter's EC2NodeClass and NodePool are managed through Kubernetes manifests r
 
 The existing Terraform Karpenter module files have therefore been removed as part of this ticket.
 
-The following configuration remains dependent on other infrastructure components:
+The remaining infrastructure dependency is ensuring
+the appropriate subnet and security group resources
+have matching `karpenter.sh/discovery` tags for
+`eks-v2-dev-cluster`.
 
-- Confirmation of the EC2 node IAM role.
-- Matching subnet and security group discovery tags.
-- Karpenter controller installation and IAM permissions.
-- Confirmation of deployment order and ArgoCD integration.
-
-These dependencies must be resolved before deployment testing can be completed.
+Deployment order and ArgoCD integration also need
+to be confirmed before deployment testing can be
+completed.

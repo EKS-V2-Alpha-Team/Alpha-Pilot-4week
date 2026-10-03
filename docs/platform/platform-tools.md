@@ -72,8 +72,8 @@ A pod proves who it is through its **service account**, a named identity inside 
 | Karpenter | `kube-system` / `karpenter` | Matches |
 | ExternalDNS | `external-dns` / `external-dns` | Matches |
 | cert-manager | `cert-manager` / `cert-manager` | Matches |
-| External Secrets | `external-secrets` / `external-secrets` | **Mismatch on `main`:** still the placeholder `secrets_manager`. Fix in the platform IAM PR. |
-| Load Balancer Controller | `kube-system` / `aws-load-balancer-controller` | **Missing on `main`.** Added in the platform IAM PR. |
+| External Secrets | `external-secrets` / `external-secrets` | Matches. Fixed in ALPHA-62 (it was the placeholder `secrets_manager`). |
+| Load Balancer Controller | `kube-system` / `aws-load-balancer-controller` | Matches. Added in ALPHA-62 with AWS's official v3.5.0 policy, kept unchanged in `modules/pod-identity/policies/`. |
 | EBS CSI driver | Set by the EKS add-on | In the EKS module |
 
 Traefik, Reloader, metrics-server, kube-prometheus-stack and ArgoCD don't call AWS, so they have no role.
@@ -115,8 +115,9 @@ Traefik, Reloader, metrics-server, kube-prometheus-stack and ArgoCD don't call A
 
 ## 7. What we accepted and what's still open
 
-- **Two placeholders on `main`:** `vpcId` for the Load Balancer Controller, and the ExternalDNS domain. Whoever deploys fills them in. Naima's rule is that each person uses their own domain.
-- **The platform IAM PR has to be applied first.** It adds the Load Balancer Controller's role, fixes External Secrets' namespace, adds the JWT secret, and makes the hosted zone ARN a real input. On `main` the zone ARN is still `"n/a"`, and AWS expects a real ARN in a policy, so the Terraform apply would most likely fail.
+- **Two placeholders in the values:** `vpcId` for the Load Balancer Controller, and the ExternalDNS domain. Fill `vpcId` from `terraform output -raw vpc_id` after apply, and the domain once the team picks it on 3 Oct.
+- **The hosted zone is still a placeholder.** `route53_hosted_zone_arn` defaults to `"n/a"` in the pod-identity module, and the ExternalDNS and cert-manager policies use it. IAM policies identify resources by ARN, so set the chosen zone's ARN before applying, or the apply will most likely fail on those two policies. The team picks the domain on 3 Oct.
+- **Secrets are deleted immediately on destroy (dev only).** The Grafana and JWT secrets set `recovery_window_in_days = 0`, so the next apply after a destroy can reuse their names. In prod, keep the default 30-day recovery window.
 - **Karpenter won't add nodes yet.** The subnets and security group have no `karpenter.sh/discovery` tags, and the EC2NodeClass in PR #39 names a different cluster (ALPHA-64). Until that's fixed we run on the 3 starter nodes.
 - **Teardown order.** The NLB belongs to the Load Balancer Controller, not Terraform. Delete the Traefik Service first, or `terraform destroy` hangs. The destroy pipeline (ALPHA-95) has to do this.
 - **Metrics live 24 hours** on a 20 GiB `gp2` disk. That's enough to debug a test cycle, not for trends.

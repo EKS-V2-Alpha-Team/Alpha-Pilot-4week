@@ -6,7 +6,5 @@ env:
   AWS_REGION: eu-west-2
 
 database:
-  # RDS-managed master secret: terraform output -raw db_secret_arn
-  credentialsSecret: REPLACE_WITH_DB_SECRET_ARN
-  # RDS endpoint: terraform output -raw db_address
-  host: REPLACE_WITH_DB_ADDRESS
+  credentialsSecret: eks-v2-dev-db-credentials
+  connectionSecret: eks-v2-dev-db-connection

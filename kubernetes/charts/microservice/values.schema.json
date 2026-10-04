@@ -117,11 +117,8 @@
         "credentialsSecret": {
           "type": "string"
         },
-        "host": {
+        "connectionSecret": {
           "type": "string"
-        },
-        "port": {
-          "type": "integer"
         },
         "name": {
           "type": "string",

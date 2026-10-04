@@ -39,6 +39,7 @@ resource "aws_iam_policy" "secrets_manager_read" {
 
         Resource = [
           var.db_secret_arn,
+          var.db_connection_secret_arn,
           var.grafana_secret_arn,
           var.jwt_secret_arn
         ]

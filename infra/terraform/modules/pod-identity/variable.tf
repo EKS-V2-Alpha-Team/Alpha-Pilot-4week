@@ -14,6 +14,11 @@ variable "db_secret_arn" {
   type        = string
 }
 
+variable "db_connection_secret_arn" {
+  description = "ARN of the database connection (host, port) secret"
+  type        = string
+}
+
 variable "grafana_secret_arn" {
   description = "ARN of the Grafana password secret"
   type        = string

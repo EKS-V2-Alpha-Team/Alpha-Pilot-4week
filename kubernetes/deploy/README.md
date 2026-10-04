@@ -52,7 +52,7 @@ Swap `order-service` for any other service folder name.
 | Dependency | Why | Name the chart expects |
 |---|---|---|
 | External Secrets + `ClusterSecretStore` | `DATABASE_URL`, `JWT_SECRET` | `aws-secrets-manager` |
-| RDS (Postgres) | `DATABASE_URL` | Endpoint and RDS-managed secret ARN in `envs/<env>/common.yaml`; SSL required |
+| RDS (Postgres) | `DATABASE_URL` | `<project>-<env>-db-credentials` and `<project>-<env>-db-connection` secret names in `envs/<env>/common.yaml`; SSL required |
 | Pod Identity association (order-service, worker) | SQS access | SA = service name, namespace `order-platform` |
 | Redis Service | api-gateway rate limiting | `redis` (not installed yet) |
 | Traefik + cert-manager `ClusterIssuer` | only when `ingressRoute.enabled` | entrypoint `websecure`, `letsencrypt-staging` / `letsencrypt-prod` |

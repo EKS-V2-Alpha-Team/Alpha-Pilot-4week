@@ -18,3 +18,13 @@ output "ecr_repository_name" {
   description = "Name of the ECR repository"
   value       = aws_ecr_repository.main.name
 }
+
+output "route53_hosted_zone_name_servers" {
+  description = "Name servers of the Route 53 hosted zone"
+  value       = aws_route53_zone.main.name_servers
+}
+
+output "route53_hosted_zone_arn" {
+  description = "ARN of the Route 53 hosted zone"
+  value       = aws_route53_zone.main.arn
+}

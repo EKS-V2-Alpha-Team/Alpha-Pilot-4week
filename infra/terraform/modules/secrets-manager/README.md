@@ -11,9 +11,10 @@ application, encrypted using a customer-managed KMS key.
 - KMS alias
 - Grafana password secret
 - api-gateway JWT signing secret (`<project>-<environment>-jwt-secret`)
-- Independently generated values for both secrets
+- Database credentials secret (`<project>-<environment>-db-credentials`), JSON `{"username", "password"}`
+- Independently generated values for each secret
 
-The database password is not created here. RDS manages it (`manage_master_user_password` in the rds module) and encrypts it with this module's KMS key.
+The rds module reads the database password from this secret, so RDS and the apps use the same value. The fixed name means the Helm values reference it once per environment instead of a new ARN after every rebuild.
 
 ## Inputs
 
@@ -21,11 +22,15 @@ The database password is not created here. RDS manages it (`manage_master_user_p
 |---|---|---|
 | project_name | Project name used in resource naming | string |
 | environment | Deployment environment | string |
+| db_username | RDS master username stored in the database credentials secret (default `admin`) | string |
 
 ## Outputs
 
 | Name | Description |
 |---|---|
+| db_credentials_secret_arn | ARN of the database credentials secret |
+| db_credentials_secret_name | Name of the database credentials secret, used as the ExternalSecret key |
+| db_username | RDS master username stored in the secret |
 | grafana_password_secret_arn | ARN of the Grafana password secret |
 | jwt_secret_arn | ARN of the api-gateway JWT signing secret |
 | kms_key_arn | ARN of the KMS key used to encrypt secrets |
@@ -65,7 +70,7 @@ and write-only Secrets Manager arguments.
 
 KMS key rotation is enabled.
 
-Both secrets set `recovery_window_in_days = 0` so a destroy deletes them immediately and the next apply can reuse the names. That suits dev, where we deploy and destroy repeatedly. In prod, keep the default 30-day recovery window so a deleted secret can be restored.
+All secrets set `recovery_window_in_days = 0` so a destroy deletes them immediately and the next apply can reuse the names. That suits dev, where we deploy and destroy repeatedly. In prod, keep the default 30-day recovery window so a deleted secret can be restored.
 
 Automatic database and Grafana credential rotation
 has not been implemented and requires a team decision.

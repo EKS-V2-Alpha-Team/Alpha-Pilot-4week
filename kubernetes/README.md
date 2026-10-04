@@ -7,7 +7,7 @@ Cluster tools the apps depend on. ArgoCD is installed once by hand; ArgoCD insta
 | `helmfile.yaml` + `helm-values/argocd-values.yaml` | ArgoCD, installed by hand once                                                                    |
 | `platform/root-app.yaml`                           | Root app, applied by hand once; points at `platform/apps/`                                        |
 | `platform/apps/`                                   | One ArgoCD Application per tool: upstream chart at a pinned version + our values file             |
-| `platform/manifests/`                              | Our own cluster resources (ClusterIssuers, ClusterSecretStore, Karpenter EC2NodeClass + NodePool) |
+| `platform/manifests/`                              | Our own cluster resources (ClusterIssuers, ClusterSecretStore, Karpenter EC2NodeClass + NodePool, `order-platform` namespace, default gp3 StorageClass) |
 | `helm-values/`                                     | Values for every chart. Non-obvious settings are explained inline                                 |
 | `charts/microservice/`                             | Shared chart for the 9 services (see `deploy/README.md`)                                          |
 | `deploy/`                                          | Per-service and per-environment values for that chart                                             |
@@ -25,6 +25,7 @@ Cluster tools the apps depend on. ArgoCD is installed once by hand; ArgoCD insta
 | Traefik                      | Routes requests to services                                                                        | -1   |
 | ExternalDNS                  | Points the domain at the NLB in Route 53                                                           | -1   |
 | Reloader                     | Restarts pods when a secret rotates                                                                | -1   |
+| Redis (StatefulSet, 1Gi gp3)  | Rate-limit counters for api-gateway, in `order-platform`                                           | -1   |
 | kube-prometheus-stack        | Prometheus, Grafana, Alertmanager                                                                  | -1   |
 | The 9 services (ALPHA-91)    | The order platform apps, from the shared microservice chart                                        | 0    |
 
@@ -100,7 +101,8 @@ kubectl get clusterissuer                             # both READY True
 
 ## Known gaps
 
-- Not installed yet: gp3 default StorageClass, VolumeSnapshotClass + snapshot-controller, Redis.
+- Not installed yet: VolumeSnapshotClass + snapshot-controller.
+- Redis has no password. Only the gateway uses it, for rate-limit counters, and it fails open.
 - Grafana generates its own admin password; the Secrets Manager one isn't wired in yet.
 
 ## Tear down

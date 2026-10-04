@@ -1,5 +1,5 @@
 # Minimal valid values so the chart can be linted/tested on its own
-# (`helm lint charts/microservice -f charts/microservice/ci/test-values.yaml`).
+# (`helm lint kubernetes/charts/microservice -f kubernetes/charts/microservice/ci/test-values.yaml`).
 # Exercises most optional templates.
 component: api
 image:
@@ -13,6 +13,7 @@ env:
 database:
   enabled: true
   credentialsSecret: test-db-credentials
+  host: test-db.example.internal
 externalSecrets:
   env:
     - name: JWT_SECRET

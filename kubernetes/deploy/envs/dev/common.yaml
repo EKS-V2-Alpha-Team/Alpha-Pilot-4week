@@ -1,15 +1,17 @@
 # Settings shared by every service in dev.
+# REPLACE_WITH_* values come from Terraform outputs after the first apply:
+#   terraform -chdir=infra/terraform output
 
 image:
-  # TODO(ALPHA-xx): replace 000000000000 with the dev AWS account ID.
-  # CI currently pushes all services to this single repo with tags <service>-<sha>.
-  repository: 000000000000.dkr.ecr.eu-west-2.amazonaws.com/eks-v2-dev-ecr
+  # CI pushes all services to this one repo, tagged <service>-<sha>.
+  # Account ID: aws sts get-caller-identity --query Account --output text
+  repository: REPLACE_WITH_ACCOUNT_ID.dkr.ecr.eu-west-2.amazonaws.com/eks-v2-dev-ecr
 
 env:
   AWS_REGION: eu-west-2
 
 database:
-  # Terraform: module.secrets_manager -> {"username", "password"}
-  credentialsSecret: eks-v2-dev-db-credentials
-  # In-cluster Postgres StatefulSet Service (same namespace).
-  host: postgres
+  # RDS-managed master secret: terraform output -raw db_secret_arn
+  credentialsSecret: REPLACE_WITH_DB_SECRET_ARN
+  # RDS endpoint: terraform output -raw db_address
+  host: REPLACE_WITH_DB_ADDRESS

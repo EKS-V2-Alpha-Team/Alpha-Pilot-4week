@@ -2,9 +2,9 @@
 #
 # Layering (later files win):
 #   1. this file                           -> platform-wide defaults
-#   2. deploy/services/<svc>/values.yaml   -> what the service is (ports, env, resources)
-#   3. deploy/envs/<env>/common.yaml       -> env-wide settings (registry, DB secret, region)
-#   4. deploy/envs/<env>/<svc>.yaml        -> env + service specific (image tag, replicas)
+#   2. kubernetes/deploy/services/<svc>/values.yaml   -> what the service is (ports, env, resources)
+#   3. kubernetes/deploy/envs/<env>/common.yaml       -> env-wide settings (registry, DB, region)
+#   4. kubernetes/deploy/envs/<env>/<svc>.yaml        -> env + service specific (image tag, replicas)
 #
 # Values are validated against values.schema.json on lint/template/install.
 
@@ -45,23 +45,27 @@ metricsPort: null
 # Values are always quoted, so "60" stays a string.
 env: {}
 
-# -- Postgres access. When enabled, DATABASE_URL is built by External Secrets
-# from a Secrets Manager secret shaped {"username": "...", "password": "..."}.
+# -- Postgres (RDS) access. When enabled, DATABASE_URL is built by External Secrets
+# from the RDS-managed Secrets Manager secret, shaped {"username": "...", "password": "..."}.
 database:
   enabled: false
-  # -- Secrets Manager secret name (set per environment).
+  # -- RDS-managed secret ARN (set per environment; Terraform output db_secret_arn).
   credentialsSecret: ""
-  host: postgres
+  # -- RDS endpoint (set per environment; Terraform output db_address).
+  host: ""
   port: 5432
   name: orders
-  sslMode: disable
+  # -- RDS for PostgreSQL 15+ rejects non-SSL connections by default.
+  sslMode: require
 
 # -- Extra secret env vars pulled from AWS Secrets Manager via External Secrets.
 externalSecrets:
   secretStoreRef:
     name: aws-secrets-manager
     kind: ClusterSecretStore
-  refreshInterval: 1h
+  # -- RDS rotates its master password; a short refresh limits how long pods
+  # keep a stale one (Reloader then restarts them).
+  refreshInterval: 15m
   # -- e.g. [{ name: JWT_SECRET, key: eks-v2-dev-jwt-secret }]
   # Add `property: <json-key>` when the secret value is JSON.
   env: []

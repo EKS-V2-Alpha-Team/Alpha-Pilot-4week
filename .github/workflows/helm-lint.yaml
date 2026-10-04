@@ -24,6 +24,8 @@ jobs:
 
       - name: Setup Helm
         uses: azure/setup-helm@v4
+        with:
+          version: v4.3.0
 
       - name: Lint the chart on its own
         run: helm lint "$CHART" -f "$CHART/ci/test-values.yaml"
@@ -43,8 +45,8 @@ jobs:
 
       - name: Validate rendered manifests against Kubernetes schemas
         run: |
-          curl -sL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz
-          ./kubeconform -strict -summary \
+          curl -sfL https://github.com/yannh/kubeconform/releases/download/v0.8.0/kubeconform-linux-amd64.tar.gz | tar xz
+          ./kubeconform -strict -summary -kubernetes-version 1.35.0 \
             -schema-location default \
             -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
             /tmp/*.yaml

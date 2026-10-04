@@ -12,8 +12,8 @@ output "db_address" {
   value       = module.rds.db_address
 }
 
-output "db_secret_arn" {
-  description = "ARN of the RDS-managed master secret, used as the ExternalSecret key."
-  value       = module.rds.db_secret_arn
+output "db_credentials_secret_name" {
+  description = "Database credentials secret"
+  value       = module.secrets_manager.db_credentials_secret_name
 }
 

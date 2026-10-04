@@ -8,11 +8,6 @@ output "db_port" {
   value       = aws_db_instance.this.port
 }
 
-output "db_secret_arn" {
-  description = "ARN of the RDS-managed master password secret in Secrets Manager"
-  value       = aws_db_instance.this.master_user_secret[0].secret_arn
-}
-
 output "security_group_id" {
   description = "Database security group ID."
   value       = aws_security_group.rds.id

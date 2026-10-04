@@ -22,7 +22,7 @@ module "eks" {
 module "pod-identity" {
   source = "./modules/pod-identity"
 
-  db_secret_arn           = module.rds.db_secret_arn
+  db_secret_arn           = module.secrets_manager.db_credentials_secret_arn
   grafana_secret_arn      = module.secrets_manager.grafana_password_secret_arn
   jwt_secret_arn          = module.secrets_manager.jwt_secret_arn
   project_name            = var.project_name
@@ -53,10 +53,12 @@ module "sqs" {
 module "rds" {
   source = "./modules/rds"
 
-  project_name              = var.project_name
-  environment               = var.environment
-  vpc_id                    = module.vpc.vpc_id
-  db_subnet_group_name      = module.vpc.db_subnet_group_name
-  kms_key_arn               = module.secrets_manager.kms_key_arn
-  allowed_security_group_id = module.eks.cluster_security_group_id
+  project_name                  = var.project_name
+  environment                   = var.environment
+  vpc_id                        = module.vpc.vpc_id
+  db_subnet_group_name          = module.vpc.db_subnet_group_name
+  kms_key_arn                   = module.secrets_manager.kms_key_arn
+  allowed_security_group_id     = module.eks.cluster_security_group_id
+  master_username               = module.secrets_manager.db_username
+  master_credentials_secret_arn = module.secrets_manager.db_credentials_secret_arn
 }

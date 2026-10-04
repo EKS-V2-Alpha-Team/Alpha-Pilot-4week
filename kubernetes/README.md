@@ -6,7 +6,7 @@ Cluster tools the apps depend on. ArgoCD is installed once by hand; ArgoCD insta
 | -------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | `helmfile.yaml` + `helm-values/argocd-values.yaml` | ArgoCD, installed by hand once                                                                    |
 | `platform/root-app.yaml`                           | Root app, applied by hand once; points at `platform/apps/`                                        |
-| `platform/apps/`                                   | One ArgoCD Application per tool: upstream chart at a pinned version + our values file             |
+| `platform/apps/`                                   | One ArgoCD Application per tool (pinned chart + our values), plus the services ApplicationSet     |
 | `platform/manifests/`                              | Our own cluster resources (ClusterIssuers, ClusterSecretStore, Karpenter EC2NodeClass + NodePool) |
 | `helm-values/`                                     | Values for every chart. Non-obvious settings are explained inline                                 |
 | `charts/microservice/`                             | Shared chart for the 9 services (see `deploy/README.md`)                                          |
@@ -26,7 +26,7 @@ Cluster tools the apps depend on. ArgoCD is installed once by hand; ArgoCD insta
 | ExternalDNS                  | Points the domain at the NLB in Route 53                                                           | -1   |
 | Reloader                     | Restarts pods when a secret rotates                                                                | -1   |
 | kube-prometheus-stack        | Prometheus, Grafana, Alertmanager                                                                  | -1   |
-| The 9 services (ALPHA-91)    | The order platform apps, from the shared microservice chart                                        | 0    |
+| The 9 services               | `order-platform.yaml` ApplicationSet: one Application per service                                  | 0    |
 
 A wave starts only when the previous one is healthy (health check in `argocd-values.yaml`).
 

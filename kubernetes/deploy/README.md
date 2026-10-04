@@ -10,9 +10,9 @@ kubernetes/deploy/
   envs/<env>/<svc>.yaml        # env + service: image tag (CI writes it), replicas, env-only config
 ```
 
-Files are layered in this order (later wins). The ArgoCD ApplicationSet (ALPHA-91) must use
-the same order, with paths relative to the chart and the SSH repo URL
-(`git@github.com:EKS-V2-Alpha-Team/Alpha-Pilot-4week.git`) so ArgoCD's deploy key matches:
+Files are layered in this order (later wins). The ArgoCD ApplicationSet
+(`platform/apps/order-platform.yaml`) uses the same order, with paths relative to the chart
+and the SSH repo URL (`git@github.com:EKS-V2-Alpha-Team/Alpha-Pilot-4week.git`) so ArgoCD's deploy key matches:
 
 ```yaml
 helm:

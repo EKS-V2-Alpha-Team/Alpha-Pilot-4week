@@ -44,3 +44,9 @@ variable "github_repo_id" {
   type    = string
   default = "1373024865"
 }
+
+variable "route53_hosted_zone_name" {
+  description = "Route 53 hosted zone name"
+  type        = string
+  default     = "eksv2.naimaosmann.com"
+}

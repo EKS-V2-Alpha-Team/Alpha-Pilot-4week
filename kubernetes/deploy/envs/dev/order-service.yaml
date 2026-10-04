@@ -1,6 +1,5 @@
 # order-service in dev.
 image:
-  # Written by CI on every build of order-service. Placeholder until the first deploy.
   tag: order-service-replace-me
 
 replicaCount: 1

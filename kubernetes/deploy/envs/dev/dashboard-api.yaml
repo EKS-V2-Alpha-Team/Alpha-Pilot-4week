@@ -1,6 +1,5 @@
 # dashboard-api in dev.
 image:
-  # Written by CI on every build of dashboard-api. Placeholder until the first deploy.
   tag: dashboard-api-replace-me
 
 replicaCount: 1

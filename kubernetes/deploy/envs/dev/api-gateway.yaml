@@ -1,6 +1,5 @@
 # api-gateway in dev.
 image:
-  # Written by CI on every build of api-gateway. Placeholder until the first deploy.
   tag: api-gateway-replace-me
 
 # 2 pods in dev so the PDB and zero-downtime rollouts are actually exercised.
@@ -18,8 +17,7 @@ externalSecrets:
 
 ingressRoute:
   enabled: true
-  # Must equal external-dns.alpha.kubernetes.io/hostname in
-  # kubernetes/helm-values/traefik-values.yaml, or DNS and the certificate won't match.
+  # Must equal external-dns.alpha.kubernetes.io/hostname in kubernetes/helm-values/traefik-values.yaml
   host: dashboard.dev.eksv2.naimaosmann.com
   tls:
     clusterIssuer: letsencrypt-staging

@@ -1,6 +1,5 @@
 # worker in dev.
 image:
-  # Written by CI on every build of worker. Placeholder until the first deploy.
   tag: worker-replace-me
 
 replicaCount: 1

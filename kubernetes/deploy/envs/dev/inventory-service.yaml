@@ -1,6 +1,5 @@
 # inventory-service in dev.
 image:
-  # Written by CI on every build of inventory-service. Placeholder until the first deploy.
   tag: inventory-service-replace-me
 
 replicaCount: 1

@@ -1,6 +1,5 @@
 # shipping-service in dev.
 image:
-  # Written by CI on every build of shipping-service. Placeholder until the first deploy.
   tag: shipping-service-replace-me
 
 replicaCount: 1

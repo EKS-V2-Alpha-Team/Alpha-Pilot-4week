@@ -1,6 +1,5 @@
 # payment-service in dev.
 image:
-  # Written by CI on every build of payment-service. Placeholder until the first deploy.
   tag: payment-service-replace-me
 
 replicaCount: 1

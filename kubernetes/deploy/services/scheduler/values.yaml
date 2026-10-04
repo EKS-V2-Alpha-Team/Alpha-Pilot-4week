@@ -1,6 +1,4 @@
-# scheduler: runs cron jobs on an in-process ticker. Two pods = every job runs
-# twice, so it is a singleton (1 replica, Recreate, no HPA). See TICKETS for
-# moving jobs to CronJobs.
+# scheduler: singleton, because a second pod would run every cron job twice.
 component: scheduler
 containerPort: 8091
 portEnvName: HEALTH_PORT

@@ -22,16 +22,17 @@ module "eks" {
 module "pod-identity" {
   source = "./modules/pod-identity"
 
-  db_secret_arn        = module.rds.db_secret_arn
-  grafana_secret_arn   = module.secrets_manager.grafana_password_secret_arn
-  jwt_secret_arn       = module.secrets_manager.jwt_secret_arn
-  project_name         = var.project_name
-  cluster_name         = module.eks.cluster_name
-  kms_key_arn          = module.secrets_manager.kms_key_arn
-  environment          = var.environment
-  aws_region           = var.aws_region
-  worker_node_role_arn = module.eks.node_role_arn
-  sqs_queue_arn        = module.sqs.queue_arn
+  db_secret_arn           = module.rds.db_secret_arn
+  grafana_secret_arn      = module.secrets_manager.grafana_password_secret_arn
+  jwt_secret_arn          = module.secrets_manager.jwt_secret_arn
+  project_name            = var.project_name
+  cluster_name            = module.eks.cluster_name
+  kms_key_arn             = module.secrets_manager.kms_key_arn
+  environment             = var.environment
+  aws_region              = var.aws_region
+  worker_node_role_arn    = module.eks.node_role_arn
+  sqs_queue_arn           = module.sqs.queue_arn
+  route53_hosted_zone_arn = data.aws_route53_zone.main.arn
 
 }
 

@@ -12,9 +12,8 @@ sources:
   - traefik-proxy
   - service
 
-# The Route 53 hosted zone name (e.g. orders.<domain>), not the full hostname.
 domainFilters:
-  - REPLACE_WITH_TEAM_DOMAIN
+  - eksv2.naimaosmann.com
 
 extraArgs:
   - --aws-zone-type=public

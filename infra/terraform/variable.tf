@@ -56,3 +56,9 @@ variable "cluster_admin_principal_arns" {
   type        = list(string)
   default     = []
 }
+
+variable "route53_hosted_zone_name" {
+  description = "Route 53 hosted zone"
+  type        = string
+  default     = "eksv2.naimaosmann.com"
+}

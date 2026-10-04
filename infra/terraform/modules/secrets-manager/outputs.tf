@@ -15,7 +15,6 @@ output "jwt_secret_arn" {
 
 output "db_credentials_secret_arn" {
   description = "ARN of the database credentials secret"
-  # References the version so readers wait until the value has been written.
   value = aws_secretsmanager_secret_version.db_credentials.secret_arn
 }
 

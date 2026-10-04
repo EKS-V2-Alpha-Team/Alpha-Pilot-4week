@@ -48,11 +48,10 @@ resource "aws_secretsmanager_secret_version" "jwt_secret" {
 }
 
 resource "aws_secretsmanager_secret" "db_credentials" {
-  # Fixed name so the Helm values reference it once per environment, not a per-build ARN.
   name       = "${var.project_name}-${var.environment}-db-credentials"
   kms_key_id = aws_kms_key.secret_encryption.arn
 
-  # dev only: delete immediately so destroy/apply cycles can reuse the name; prod keeps the default 30-day recovery window
+  # dev only: delete immediately so destroy/apply cycles can reuse the name
   recovery_window_in_days = 0
 }
 
@@ -65,7 +64,6 @@ ephemeral "aws_secretsmanager_random_password" "db_password" {
 resource "aws_secretsmanager_secret_version" "db_credentials" {
   secret_id = aws_secretsmanager_secret.db_credentials.id
 
-  # Shape matches what the app chart's ExternalSecret reads: username + password.
   secret_string_wo = jsonencode({
     username = var.db_username
     password = ephemeral.aws_secretsmanager_random_password.db_password.random_password

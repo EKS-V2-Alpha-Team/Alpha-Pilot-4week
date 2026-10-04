@@ -1,9 +1,17 @@
 prometheus:
   prometheusSpec:
-    # 24h on 20Gi is enough to debug a test cycle, not for trends.
-    retention: 24h
+    # Going with 7 days to check for weekly trends such as gradual changes or spikes
+    retention: 7d
     # Collect every ServiceMonitor, including the apps' (they have no release label).
     serviceMonitorSelectorNilUsesHelmValues: false
+
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: 1
+        memory: 2Gi
 
     storageSpec:
       volumeClaimTemplate:
@@ -12,10 +20,18 @@ prometheus:
           accessModes: ["ReadWriteOnce"]
           resources:
             requests:
-              storage: 20Gi
+              storage: 20Gi # can change later increase depending on load
 
 alertmanager:
   alertmanagerSpec:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 250m
+        memory: 256Mi
+
     storage: {}
 
 # Don't add a datasource: the chart already adds the default Prometheus one,
@@ -23,10 +39,21 @@ alertmanager:
 grafana:
   enabled: true
 
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
   service:
     type: ClusterIP
 
-  adminUser: admin
+  admin:
+    existingSecret: grafana-admin-credentials # linking k8 secret from AWS secret manager
+    userKey: admin-user
+    passwordKey: admin-password
 
 kubeStateMetrics:
   enabled: true

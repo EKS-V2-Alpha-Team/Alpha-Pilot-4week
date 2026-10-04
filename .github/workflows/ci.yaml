@@ -126,6 +126,63 @@ jobs:
           severity: HIGH,CRITICAL
           scanners: vuln
 
+      # Push on merges and manual runs, never on PRs.
+      # skips on already-built commit instead of failing.
       - name: Push image to ECR
-        if: github.event_name == 'push'
-        run: docker push ${{ steps.meta.outputs.tag }}
+        if: github.event_name != 'pull_request'
+        env:
+          IMAGE: ${{ steps.meta.outputs.tag }}
+          REPOSITORY: ${{ secrets.AWS_ECR_REPO }}
+        run: |
+          if aws ecr describe-images --repository-name "$REPOSITORY" --image-ids imageTag="${IMAGE##*:}" >/dev/null 2>&1; then
+            echo "${IMAGE##*:} is already in ECR, skipping push"
+          else
+            docker push "$IMAGE"
+          fi
+
+  # Points dev at the new images: ArgoCD deploys whatever tag is in these files.
+  update-dev-tags:
+    name: Update Dev Image Tags
+    needs: [detect-changes, build-and-push]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+
+    concurrency:
+      group: update-dev-tags
+      cancel-in-progress: false
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+        with:
+          ref: main
+
+      - name: Write new tags into the dev values
+        env:
+          SERVICES: ${{ needs.detect-changes.outputs.services }}
+        run: |
+          SHA=$(echo "${{ github.sha }}" | cut -c1-8)
+          for svc in $(echo "$SERVICES" | jq -r '.[]'); do
+            file="kubernetes/deploy/envs/dev/${svc}.yaml"
+            if [ ! -f "$file" ]; then
+              echo "::error::$file not found"
+              exit 1
+            fi
+            sed -i -E "s|^(  tag: ).*|\1${svc}-${SHA}|" "$file"
+            echo "$svc -> ${svc}-${SHA}"
+          done
+
+      - name: Commit and push
+        run: |
+          if git diff --quiet; then
+            echo "No tag changes"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git commit -am "chore(deploy): point dev at ${GITHUB_SHA::8} images"
+          git pull --rebase origin main
+          git push origin HEAD:main

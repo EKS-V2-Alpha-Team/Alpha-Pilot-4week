@@ -1,5 +1,5 @@
 # dashboard-api in dev.
 image:
-  tag: dashboard-api-replace-me
+  tag: dashboard-api-b8d37e8f
 
 replicaCount: 1

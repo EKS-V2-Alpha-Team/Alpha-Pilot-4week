@@ -1,0 +1,14 @@
+# worker: SQS consumer. Takes no inbound traffic; only a health port.
+component: worker
+containerPort: 8090
+portEnvName: HEALTH_PORT
+
+service:
+  enabled: false
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 128Mi

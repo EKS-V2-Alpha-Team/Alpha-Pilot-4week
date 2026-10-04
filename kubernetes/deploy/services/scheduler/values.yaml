@@ -1,0 +1,21 @@
+# scheduler: singleton, because a second pod would run every cron job twice.
+component: scheduler
+containerPort: 8091
+portEnvName: HEALTH_PORT
+singleton: true
+
+env:
+  PGAPPNAME: scheduler
+
+database:
+  enabled: true
+
+service:
+  enabled: false
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 128Mi

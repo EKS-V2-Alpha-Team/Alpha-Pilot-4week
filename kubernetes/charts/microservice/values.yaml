@@ -1,0 +1,208 @@
+# Opinionated defaults shared by every order-platform service.
+#
+# Layering (later files win):
+#   1. this file                           -> platform-wide defaults
+#   2. kubernetes/deploy/services/<svc>/values.yaml   -> what the service is (ports, env, resources)
+#   3. kubernetes/deploy/envs/<env>/common.yaml       -> env-wide settings (registry, DB, region)
+#   4. kubernetes/deploy/envs/<env>/<svc>.yaml        -> env + service specific (image tag, replicas)
+#
+# Values are validated against values.schema.json on lint/template/install.
+
+# -- Overrides the resource name. Leave empty: the release name IS the service name.
+fullnameOverride: ""
+
+# -- app.kubernetes.io/component label (api, gateway, worker, scheduler, frontend).
+component: ""
+# -- app.kubernetes.io/part-of label.
+partOf: order-platform
+
+image:
+  # -- Required. ECR repository URI (set per environment).
+  repository: ""
+  # -- Required. Immutable tag written by CI. "latest" is rejected by the schema.
+  tag: ""
+  # -- Optional. Pin by digest instead of tag (sha256:...). Wins over tag.
+  digest: ""
+  pullPolicy: IfNotPresent
+
+# -- Ignored when autoscaling.enabled is true (the HPA owns replicas then).
+replicaCount: 1
+
+# -- Set true for workloads that must never run more than one pod (scheduler).
+# Forces the Recreate strategy and fails rendering if replicas > 1 or HPA is on.
+singleton: false
+
+# -- Main container port, named "http". Probes and the Service target it by name.
+containerPort: 8080
+# -- Env var the app reads its listen port from. The chart sets it from
+# containerPort so the two can never drift. Worker/scheduler use HEALTH_PORT.
+portEnvName: PORT
+
+# -- Optional Prometheus metrics port, named "metrics" (sets METRICS_PORT).
+metricsPort: null
+
+# -- Non-secret environment variables, rendered into a ConfigMap.
+# Values are always quoted, so "60" stays a string.
+env: {}
+
+# -- Postgres (RDS) access. When enabled, DATABASE_URL is built by External Secrets
+# from the RDS-managed Secrets Manager secret, shaped {"username": "...", "password": "..."}.
+database:
+  enabled: false
+  # -- RDS-managed secret ARN (set per environment; Terraform output db_secret_arn).
+  credentialsSecret: ""
+  # -- RDS endpoint (set per environment; Terraform output db_address).
+  host: ""
+  port: 5432
+  name: orders
+  # -- RDS for PostgreSQL 15+ rejects non-SSL connections by default.
+  sslMode: require
+
+# -- Extra secret env vars pulled from AWS Secrets Manager via External Secrets.
+externalSecrets:
+  secretStoreRef:
+    name: aws-secrets-manager
+    kind: ClusterSecretStore
+  # -- RDS rotates its master password; a short refresh limits how long pods
+  # keep a stale one (Reloader then restarts them).
+  refreshInterval: 15m
+  # -- e.g. [{ name: JWT_SECRET, key: eks-v2-dev-jwt-secret }]
+  # Add `property: <json-key>` when the secret value is JSON.
+  env: []
+
+service:
+  # -- Set false for services that take no traffic (worker, scheduler).
+  enabled: true
+  # -- Defaults to containerPort, so http://<svc>:<port> matches the Go defaults.
+  port: null
+
+serviceAccount:
+  # -- Mount the Kubernetes API token. The services never call the K8s API.
+  # EKS Pod Identity injects its own token volume, so AWS access still works.
+  automount: false
+  annotations: {}
+
+# -- Pod-level security. Matches the distroless nonroot user (65532).
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+# -- Container-level security.
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# -- Required per service (schema): requests.cpu, requests.memory, limits.memory.
+# No CPU limit by default on purpose: CPU limits cause throttling on Go services.
+resources: {}
+
+# -- Liveness: process is alive. Never point this at /healthz: a DB blip would
+# restart every pod at once.
+livenessProbe:
+  httpGet:
+    path: /livez
+    port: http
+  periodSeconds: 10
+  timeoutSeconds: 2
+  failureThreshold: 3
+
+# -- Readiness: dependencies are OK, send traffic.
+readinessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+# -- Startup: gives migrate() and first DB connection up to 150s before
+# liveness kicks in.
+startupProbe:
+  httpGet:
+    path: /livez
+    port: http
+  periodSeconds: 5
+  failureThreshold: 30
+
+strategy:
+  # -- RollingUpdate or Recreate (forced to Recreate when singleton: true).
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 1
+    # -- 0 = never drop below desired capacity during a rollout.
+    maxUnavailable: 0
+
+# -- Rollout is marked failed after this many seconds (ArgoCD shows Degraded).
+progressDeadlineSeconds: 300
+revisionHistoryLimit: 5
+
+# -- Seconds to keep serving after SIGTERM is scheduled, so endpoints and
+# Traefik stop sending traffic before the app shuts down.
+preStopSleepSeconds: 10
+# -- Must exceed preStopSleepSeconds + the app's own shutdown timeout
+# (10s + 30s in the Go services), with headroom.
+terminationGracePeriodSeconds: 50
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+  # -- Optional. Leave null to scale on CPU only.
+  targetMemoryUtilizationPercentage: null
+
+pdb:
+  # -- Only rendered when the service runs 2+ pods (a PDB on 1 pod blocks drains).
+  enabled: true
+  maxUnavailable: 1
+
+# -- Spread pods across AZs, then across nodes. ScheduleAnyway = best effort, never blocks scheduling.
+topologySpread:
+  enabled: true
+  whenUnsatisfiable: ScheduleAnyway
+  topologyKeys:
+    - topology.kubernetes.io/zone # survive losing an AZ
+    - kubernetes.io/hostname # survive losing a node
+
+serviceMonitor:
+  # -- Needs metricsPort and the Prometheus Operator CRDs (skipped if missing).
+  enabled: false
+  interval: 30s
+  path: /metrics
+  labels: {}
+
+# -- Traefik IngressRoute. Only the public entrypoint (api-gateway) enables it.
+ingressRoute:
+  enabled: false
+  # -- Required when enabled.
+  host: ""
+  entryPoints:
+    - websecure
+  middlewares: []
+  tls:
+    # -- Create a cert-manager Certificate for host.
+    enabled: true
+    # -- Use letsencrypt-staging while testing (prod has strict rate limits).
+    clusterIssuer: letsencrypt-staging
+
+# -- Restart pods when the synced Secret changes (needs Stakater Reloader).
+reloader:
+  enabled: true
+
+podAnnotations: {}
+podLabels: {}
+priorityClassName: ""
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# -- Extra volumes/mounts on top of the chart-managed /tmp emptyDir.
+extraVolumes: []
+extraVolumeMounts: []

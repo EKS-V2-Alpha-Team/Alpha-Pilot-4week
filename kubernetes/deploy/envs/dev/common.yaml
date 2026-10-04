@@ -1,0 +1,12 @@
+image:
+  # CI pushes all services to this one repo, tagged <service>-<sha>.
+  repository: 751501311900.dkr.ecr.eu-west-2.amazonaws.com/eks-v2-dev-ecr
+
+env:
+  AWS_REGION: eu-west-2
+
+database:
+  # RDS-managed master secret: terraform output -raw db_secret_arn
+  credentialsSecret: REPLACE_WITH_DB_SECRET_ARN
+  # RDS endpoint: terraform output -raw db_address
+  host: REPLACE_WITH_DB_ADDRESS

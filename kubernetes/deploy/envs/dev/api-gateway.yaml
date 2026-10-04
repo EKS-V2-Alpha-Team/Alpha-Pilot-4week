@@ -1,0 +1,23 @@
+# api-gateway in dev.
+image:
+  tag: api-gateway-replace-me
+
+# 2 pods in dev so the PDB and zero-downtime rollouts are actually exercised.
+replicaCount: 2
+
+env:
+  # VPC CIDR: Traefik pods get VPC IPs (VPC CNI), so X-Forwarded-For is trusted
+  # only from inside the VPC. Needed for per-IP rate limiting behind the NLB.
+  TRUSTED_PROXY_CIDRS: 10.6.0.0/16
+
+externalSecrets:
+  env:
+    - name: JWT_SECRET
+      key: eks-v2-dev-jwt-secret
+
+ingressRoute:
+  enabled: true
+  # Must equal external-dns.alpha.kubernetes.io/hostname in kubernetes/helm-values/traefik-values.yaml
+  host: dashboard.dev.eksv2.naimaosmann.com
+  tls:
+    clusterIssuer: letsencrypt-staging

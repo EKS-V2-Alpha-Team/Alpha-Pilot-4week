@@ -1,0 +1,16 @@
+# notification-service
+component: api
+containerPort: 8084
+
+env:
+  PGAPPNAME: notification-service
+
+database:
+  enabled: true
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 128Mi

@@ -1,0 +1,8 @@
+# worker in dev.
+image:
+  tag: worker-replace-me
+
+replicaCount: 1
+
+env:
+  SQS_QUEUE_URL: https://sqs.eu-west-2.amazonaws.com/751501311900/eks-v2-dev-order-events

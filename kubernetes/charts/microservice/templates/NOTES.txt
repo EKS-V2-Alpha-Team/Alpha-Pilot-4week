@@ -1,0 +1,24 @@
+{{ include "microservice.fullname" . }} ({{ include "microservice.image" . }}) released to namespace {{ .Release.Namespace }}.
+
+Watch the rollout:
+  kubectl -n {{ .Release.Namespace }} rollout status deployment/{{ include "microservice.fullname" . }}
+
+Check health from your machine:
+  kubectl -n {{ .Release.Namespace }} port-forward deployment/{{ include "microservice.fullname" . }} {{ .Values.containerPort }}
+  curl -s localhost:{{ .Values.containerPort }}/healthz
+{{- if .Values.service.enabled }}
+
+In-cluster URL:
+  http://{{ include "microservice.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port | default .Values.containerPort }}
+{{- end }}
+{{- if include "microservice.hasSecrets" . }}
+
+Secrets come from ExternalSecret/{{ include "microservice.fullname" . }}. If pods are stuck in
+CreateContainerConfigError, check that it synced:
+  kubectl -n {{ .Release.Namespace }} get externalsecret {{ include "microservice.fullname" . }}
+{{- end }}
+{{- if .Values.ingressRoute.enabled }}
+
+Public URL:
+  https://{{ .Values.ingressRoute.host }}
+{{- end }}

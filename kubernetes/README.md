@@ -9,6 +9,8 @@ Cluster tools the apps depend on. ArgoCD is installed once by hand; ArgoCD insta
 | `platform/apps/`                                   | One ArgoCD Application per tool: upstream chart at a pinned version + our values file             |
 | `platform/manifests/`                              | Our own cluster resources (ClusterIssuers, ClusterSecretStore, Karpenter EC2NodeClass + NodePool) |
 | `helm-values/`                                     | Values for every chart. Non-obvious settings are explained inline                                 |
+| `charts/microservice/`                             | Shared chart for the 9 services (see `deploy/README.md`)                                          |
+| `deploy/`                                          | Per-service and per-environment values for that chart                                             |
 
 ## Tools
 
@@ -62,9 +64,10 @@ The hosted zone `eksv2.naimaosmann.com` is created in `bootstrap/` (it survives 
 
 Replace these placeholders on `main`:
 
-| Placeholder           | File                                                   | Value                                                 |
-| --------------------- | ------------------------------------------------------ | ----------------------------------------------------- |
-| `REPLACE_WITH_VPC_ID` | `helm-values/aws-load-balancer-controller-values.yaml` | `terraform -chdir=infra/terraform output -raw vpc_id` |
+| Placeholder                  | File                          | Value                                                        |
+| ---------------------------- | ----------------------------- | ------------------------------------------------------------ |
+| `REPLACE_WITH_DB_SECRET_ARN` | `deploy/envs/dev/common.yaml` | `terraform -chdir=infra/terraform output -raw db_secret_arn` |
+| `REPLACE_WITH_DB_ADDRESS`    | `deploy/envs/dev/common.yaml` | `terraform -chdir=infra/terraform output -raw db_address`    |
 
 ## Bootstrap a new cluster
 

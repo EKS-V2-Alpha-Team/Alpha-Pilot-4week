@@ -1,0 +1,5 @@
+# notification-service in dev.
+image:
+  tag: notification-service-replace-me
+
+replicaCount: 1

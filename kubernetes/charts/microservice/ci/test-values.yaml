@@ -1,0 +1,33 @@
+# Minimal valid values so the chart can be linted/tested on its own
+# (`helm lint kubernetes/charts/microservice -f kubernetes/charts/microservice/ci/test-values.yaml`).
+# Exercises most optional templates.
+component: api
+image:
+  repository: 000000000000.dkr.ecr.eu-west-2.amazonaws.com/test
+  tag: test-0000000
+containerPort: 8080
+metricsPort: 9090
+env:
+  PGAPPNAME: test
+  RATE_LIMIT_WINDOW_SECONDS: 60
+database:
+  enabled: true
+  credentialsSecret: test-db-credentials
+  host: test-db.example.internal
+externalSecrets:
+  env:
+    - name: JWT_SECRET
+      key: test-jwt-secret
+autoscaling:
+  enabled: true
+serviceMonitor:
+  enabled: true
+ingressRoute:
+  enabled: true
+  host: api.example.com
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 128Mi

@@ -1,0 +1,17 @@
+apiVersion: v2
+name: microservice
+description: >-
+  Opinionated chart for a single order-platform service. Install it once per
+  service (release name = service name) with that service's values files.
+type: application
+
+# Bump on every template or default-values change (SemVer).
+# The application version lives in values (image.tag), not here, because this
+# chart deploys nine different applications.
+version: 0.1.0
+
+keywords:
+  - order-platform
+  - microservice
+maintainers:
+  - name: EKS-V2-Alpha-Team

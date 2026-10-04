@@ -51,7 +51,7 @@ resource "aws_secretsmanager_secret" "db_credentials" {
   name       = "${var.project_name}-${var.environment}-db-credentials"
   kms_key_id = aws_kms_key.secret_encryption.arn
 
-  # dev only: delete immediately so destroy/apply cycles can reuse the name
+  # dev only: delete immediately so destroy/apply cycles can reuse the name; prod keeps the default 30-day recovery window
   recovery_window_in_days = 0
 }
 

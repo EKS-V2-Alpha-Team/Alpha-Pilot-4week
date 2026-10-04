@@ -18,7 +18,7 @@ output "db_connection_secret_name" {
 }
 
 output "db_credentials_secret_name" {
-  description = "Database credentials secret"
+  description = "Database username/password secret, used as database.credentialsSecret in the Helm values."
   value       = module.secrets_manager.db_credentials_secret_name
 }
 

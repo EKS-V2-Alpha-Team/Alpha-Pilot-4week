@@ -9,8 +9,8 @@ variable "environment" {
   type        = string
 }
 
-variable "db_secret_arn" {
-  description = "Arn of the database secret"
+variable "db_credentials_secret_arn" {
+  description = "ARN of the database credentials (username, password) secret"
   type        = string
 }
 

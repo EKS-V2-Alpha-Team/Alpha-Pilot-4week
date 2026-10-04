@@ -22,7 +22,7 @@ The rds module reads the database password from this secret, so RDS and the apps
 |---|---|---|
 | project_name | Project name used in resource naming | string |
 | environment | Deployment environment | string |
-| db_username | RDS master username stored in the database credentials secret (default `admin`) | string |
+| db_username | RDS master username stored in the database credentials secret (default `dbadmin`) | string |
 
 ## Outputs
 

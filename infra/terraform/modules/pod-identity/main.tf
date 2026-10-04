@@ -220,7 +220,8 @@ resource "aws_iam_policy" "external_dns" {
 
         Action = [
           "route53:ChangeResourceRecordSets",
-          "route53:ListResourceRecordSets"
+          "route53:ListResourceRecordSets",
+          "route53:ListTagsForResources"
         ]
 
         Resource = var.route53_hosted_zone_arn

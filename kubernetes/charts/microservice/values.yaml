@@ -162,10 +162,13 @@ pdb:
   enabled: true
   maxUnavailable: 1
 
-# -- Spread pods across AZs. ScheduleAnyway = best effort, never blocks scheduling.
+# -- Spread pods across AZs, then across nodes. ScheduleAnyway = best effort, never blocks scheduling.
 topologySpread:
   enabled: true
   whenUnsatisfiable: ScheduleAnyway
+  topologyKeys:
+    - topology.kubernetes.io/zone # survive losing an AZ
+    - kubernetes.io/hostname # survive losing a node
 
 serviceMonitor:
   # -- Needs metricsPort and the Prometheus Operator CRDs (skipped if missing).

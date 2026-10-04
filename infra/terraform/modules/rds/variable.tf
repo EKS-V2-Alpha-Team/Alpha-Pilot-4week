@@ -87,7 +87,7 @@ variable "master_credentials_secret_arn" {
 }
 
 variable "master_password_version" {
-  description = "Bump to push the current secret password to RDS (write-only, so Terraform cannot detect drift)."
+  description = "Bump to push the current secret password to RDS (write-only)"
   type        = number
   default     = 1
 }

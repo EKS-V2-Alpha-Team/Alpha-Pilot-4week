@@ -6,5 +6,4 @@ image:
 replicaCount: 1
 
 env:
-  # terraform output -raw sqs_queue_url
-  SQS_QUEUE_URL: REPLACE_WITH_SQS_QUEUE_URL
+  SQS_QUEUE_URL: https://sqs.eu-west-2.amazonaws.com/751501311900/eks-v2-dev-order-events

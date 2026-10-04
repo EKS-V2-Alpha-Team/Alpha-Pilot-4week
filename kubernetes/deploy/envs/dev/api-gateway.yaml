@@ -13,15 +13,13 @@ env:
 
 externalSecrets:
   env:
-    # Created by Terraform (module.secrets_manager).
     - name: JWT_SECRET
       key: eks-v2-dev-jwt-secret
 
 ingressRoute:
-  # Enable once the hosted zone exists and Traefik has its NLB.
-  enabled: false
+  enabled: true
   # Must equal external-dns.alpha.kubernetes.io/hostname in
   # kubernetes/helm-values/traefik-values.yaml, or DNS and the certificate won't match.
-  host: dashboard.dev.REPLACE_WITH_TEAM_DOMAIN
+  host: dashboard.dev.eksv2.naimaosmann.com
   tls:
     clusterIssuer: letsencrypt-staging

@@ -64,14 +64,10 @@ The hosted zone `eksv2.naimaosmann.com` is created in `bootstrap/` (it survives 
 
 Replace these placeholders on `main`:
 
-| Placeholder                  | File                                                     | Value                                                        |
-| ---------------------------- | -------------------------------------------------------- | ------------------------------------------------------------ |
-| `REPLACE_WITH_VPC_ID`        | `helm-values/aws-load-balancer-controller-values.yaml`   | `terraform -chdir=infra/terraform output -raw vpc_id`        |
-| `REPLACE_WITH_TEAM_DOMAIN`   | `deploy/envs/dev/api-gateway.yaml` (`ingressRoute.host`) | Same hostname as the Traefik annotation                      |
-| `REPLACE_WITH_ACCOUNT_ID`    | `deploy/envs/dev/common.yaml` (`image.repository`)       | `aws sts get-caller-identity --query Account --output text`  |
-| `REPLACE_WITH_DB_SECRET_ARN` | `deploy/envs/dev/common.yaml`                            | `terraform -chdir=infra/terraform output -raw db_secret_arn` |
-| `REPLACE_WITH_DB_ADDRESS`    | `deploy/envs/dev/common.yaml`                            | `terraform -chdir=infra/terraform output -raw db_address`    |
-| `REPLACE_WITH_SQS_QUEUE_URL` | `deploy/envs/dev/order-service.yaml`, `worker.yaml`      | `terraform -chdir=infra/terraform output -raw sqs_queue_url` |
+| Placeholder                  | File                          | Value                                                        |
+| ---------------------------- | ----------------------------- | ------------------------------------------------------------ |
+| `REPLACE_WITH_DB_SECRET_ARN` | `deploy/envs/dev/common.yaml` | `terraform -chdir=infra/terraform output -raw db_secret_arn` |
+| `REPLACE_WITH_DB_ADDRESS`    | `deploy/envs/dev/common.yaml` | `terraform -chdir=infra/terraform output -raw db_address`    |
 
 ## Bootstrap a new cluster
 

@@ -8,9 +8,14 @@ output "db_port" {
   value       = aws_db_instance.this.port
 }
 
-output "db_secret_arn" {
-  description = "ARN of the RDS-managed master password secret in Secrets Manager"
-  value       = aws_db_instance.this.master_user_secret[0].secret_arn
+output "db_connection_secret_arn" {
+  description = "ARN of the secret holding the RDS host and port"
+  value       = aws_secretsmanager_secret_version.connection.secret_arn
+}
+
+output "db_connection_secret_name" {
+  description = "Name of the secret holding the RDS host and port, used as the ExternalSecret key"
+  value       = aws_secretsmanager_secret.connection.name
 }
 
 output "security_group_id" {

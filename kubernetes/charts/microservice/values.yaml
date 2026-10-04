@@ -46,14 +46,14 @@ metricsPort: null
 env: {}
 
 # -- Postgres (RDS) access. When enabled, DATABASE_URL is built by External Secrets
-# from the RDS-managed Secrets Manager secret, shaped {"username": "...", "password": "..."}.
+# from two Terraform-managed Secrets Manager secrets: credentials {"username", "password"}
+# and connection {"host", "port"}.
 database:
   enabled: false
-  # -- RDS-managed secret ARN (set per environment; Terraform output db_secret_arn).
+  # -- Secret name, <project>-<env>-db-credentials.
   credentialsSecret: ""
-  # -- RDS endpoint (set per environment; Terraform output db_address).
-  host: ""
-  port: 5432
+  # -- Secret name, <project>-<env>-db-connection.
+  connectionSecret: ""
   name: orders
   # -- RDS for PostgreSQL 15+ rejects non-SSL connections by default.
   sslMode: require
@@ -63,8 +63,8 @@ externalSecrets:
   secretStoreRef:
     name: aws-secrets-manager
     kind: ClusterSecretStore
-  # -- RDS rotates its master password; a short refresh limits how long pods
-  # keep a stale one (Reloader then restarts them).
+  # -- How often secret changes (e.g. a password bump) reach the pods
+  # (Reloader then restarts them).
   refreshInterval: 15m
   # -- e.g. [{ name: JWT_SECRET, key: eks-v2-dev-jwt-secret }]
   # Add `property: <json-key>` when the secret value is JSON.

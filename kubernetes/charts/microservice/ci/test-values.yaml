@@ -13,7 +13,7 @@ env:
 database:
   enabled: true
   credentialsSecret: test-db-credentials
-  host: test-db.example.internal
+  connectionSecret: test-db-connection
 externalSecrets:
   env:
     - name: JWT_SECRET

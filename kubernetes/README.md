@@ -60,15 +60,6 @@ The hosted zone `eksv2.naimaosmann.com` is created in `bootstrap/` (it survives 
 2. In Cloudflare (`naimaosmann.com`), add 4 `NS` records named `eksv2`, one per value of `terraform -chdir=bootstrap output route53_hosted_zone_name_servers`. DNS only, not proxied.
 3. Check: `dig NS eksv2.naimaosmann.com +short` returns the Route 53 name servers.
 
-## Before the first deploy
-
-Replace these placeholders on `main`:
-
-| Placeholder                  | File                          | Value                                                        |
-| ---------------------------- | ----------------------------- | ------------------------------------------------------------ |
-| `REPLACE_WITH_DB_SECRET_ARN` | `deploy/envs/dev/common.yaml` | `terraform -chdir=infra/terraform output -raw db_secret_arn` |
-| `REPLACE_WITH_DB_ADDRESS`    | `deploy/envs/dev/common.yaml` | `terraform -chdir=infra/terraform output -raw db_address`    |
-
 ## Bootstrap a new cluster
 
 ```bash

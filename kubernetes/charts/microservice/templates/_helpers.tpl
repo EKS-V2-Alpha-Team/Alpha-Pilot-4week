@@ -38,6 +38,19 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 
 {{/*
+Pod template labels. Same as the common labels minus helm.sh/chart: any change to
+pod labels triggers a rollout, so a chart version bump must not restart every service.
+*/}}
+{{- define "microservice.podLabels" -}}
+{{ include "microservice.selectorLabels" . }}
+app.kubernetes.io/version: {{ .Values.image.tag | trunc 63 | trimSuffix "-" | quote }}
+{{- with .Values.component }}
+app.kubernetes.io/component: {{ . }}
+{{- end }}
+app.kubernetes.io/part-of: {{ .Values.partOf }}
+{{- end }}
+
+{{/*
 ServiceAccount name. Fixed to the release name because EKS Pod Identity
 associations in Terraform are keyed on namespace + this exact name.
 */}}

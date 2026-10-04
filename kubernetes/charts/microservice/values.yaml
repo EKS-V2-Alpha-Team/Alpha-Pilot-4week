@@ -146,8 +146,9 @@ revisionHistoryLimit: 5
 # -- Seconds to keep serving after SIGTERM is scheduled, so endpoints and
 # Traefik stop sending traffic before the app shuts down.
 preStopSleepSeconds: 10
-# -- Must exceed preStopSleepSeconds + the app's own shutdown timeout.
-terminationGracePeriodSeconds: 45
+# -- Must exceed preStopSleepSeconds + the app's own shutdown timeout
+# (10s + 30s in the Go services), with headroom.
+terminationGracePeriodSeconds: 50
 
 autoscaling:
   enabled: false

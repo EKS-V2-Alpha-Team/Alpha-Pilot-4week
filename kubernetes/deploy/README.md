@@ -71,7 +71,8 @@ Swap `order-service` for any other service folder name.
 
 - Non-root (UID 65532), read-only root FS, all capabilities dropped, writable `/tmp`.
 - Probes: liveness `/livez`, readiness `/healthz`, startup `/livez` (150s budget).
-- `maxUnavailable: 0` rollouts, 10s `preStop` sleep, 45s grace period.
+- `maxUnavailable: 0` rollouts, 10s `preStop` sleep, 50s grace period.
 - PDB only when a service runs 2+ pods; HPA owns `replicas` when enabled.
 - `singleton: true` (scheduler) forces 1 replica + `Recreate` and fails on HPA.
 - ConfigMap changes roll pods via a checksum annotation; secret changes via Reloader.
+- `GOMEMLIMIT` set from the memory limit; pod labels exclude `helm.sh/chart`, so a chart version bump doesn't restart every service.

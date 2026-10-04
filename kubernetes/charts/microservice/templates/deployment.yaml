@@ -36,7 +36,7 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
       labels:
-        {{- include "microservice.labels" . | nindent 8 }}
+        {{- include "microservice.podLabels" . | nindent 8 }}
         {{- with .Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -86,6 +86,11 @@ spec:
             - name: METRICS_PORT
               value: {{ . | quote }}
             {{- end }}
+            # Lets the Go GC work harder near the memory limit instead of getting OOMKilled.
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.memory
           envFrom:
             - configMapRef:
                 name: {{ include "microservice.fullname" . }}

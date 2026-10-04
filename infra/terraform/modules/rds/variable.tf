@@ -77,9 +77,19 @@ variable "max_allocated_storage" {
 }
 
 variable "master_username" {
-  description = "Admin user"
+  description = "Admin user. Must match the username in master_credentials_secret_arn."
   type        = string
-  default     = "admin"
+}
+
+variable "master_credentials_secret_arn" {
+  description = "Secrets Manager secret holding {\"username\", \"password\"} for the master user"
+  type        = string
+}
+
+variable "master_password_version" {
+  description = "Bump to push the current secret password to RDS (write-only)"
+  type        = number
+  default     = 1
 }
 
 variable "multi_az" {

@@ -1,0 +1,52 @@
+name: Helm Lint
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "kubernetes/charts/**"
+      - "kubernetes/deploy/**"
+      - ".github/workflows/helm-lint.yaml"
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint and render the app chart
+    runs-on: ubuntu-latest
+    env:
+      CHART: kubernetes/charts/microservice
+      DEPLOY: kubernetes/deploy
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v4.3.0
+
+      - name: Lint the chart on its own
+        run: helm lint "$CHART" -f "$CHART/ci/test-values.yaml"
+
+      # Same value files, same order as the ArgoCD ApplicationSet
+      - name: Lint and render every service (dev)
+        run: |
+          for dir in "$DEPLOY"/services/*/; do
+            svc=$(basename "$dir")
+            files="-f $DEPLOY/services/$svc/values.yaml -f $DEPLOY/envs/dev/common.yaml -f $DEPLOY/envs/dev/$svc.yaml"
+            echo "::group::$svc"
+            helm lint "$CHART" $files
+            helm template "$svc" "$CHART" -n order-platform $files \
+              --api-versions monitoring.coreos.com/v1/ServiceMonitor > "/tmp/$svc.yaml"
+            echo "::endgroup::"
+          done
+
+      - name: Validate rendered manifests against Kubernetes schemas
+        run: |
+          curl -sfL https://github.com/yannh/kubeconform/releases/download/v0.8.0/kubeconform-linux-amd64.tar.gz | tar xz
+          ./kubeconform -strict -summary -kubernetes-version 1.35.0 \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            /tmp/*.yaml

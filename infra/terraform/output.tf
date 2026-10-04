@@ -8,12 +8,17 @@ output "sqs_queue_url" {
 }
 
 output "db_address" {
-  description = "RDS hostname for DATABASE_URL in Helm values."
+  description = "RDS hostname, for debugging; the apps read it from the db-connection secret."
   value       = module.rds.db_address
 }
 
-output "db_secret_arn" {
-  description = "ARN of the RDS-managed master secret, used as the ExternalSecret key."
-  value       = module.rds.db_secret_arn
+output "db_connection_secret_name" {
+  description = "Database host/port secret, used as database.connectionSecret in the Helm values."
+  value       = module.rds.db_connection_secret_name
+}
+
+output "db_credentials_secret_name" {
+  description = "Database username/password secret, used as database.credentialsSecret in the Helm values."
+  value       = module.secrets_manager.db_credentials_secret_name
 }
 

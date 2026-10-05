@@ -1,0 +1,228 @@
+name: ArgoCD Bootstrap
+
+# infra/argocd-bootstrap: installs ArgoCD, the repo credentials and the root app on the cluster
+# Depends on Terraform Apply Workflow: both jobs stop unless the EKS cluster exists and is ACTIVE
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "infra/argocd-bootstrap/**"
+      - "kubernetes/platform/root-app.yaml"
+      - "kubernetes/helm-values/argocd-values.yaml"
+      - ".github/workflows/argocd-bootstrap.yaml"
+  workflow_dispatch:
+    inputs:
+      terraform_plan_run_id:
+        description: "Run ID of the ArgoCD Bootstrap plan to apply (leave empty to only plan)"
+        required: false
+        type: string
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  TF_WORKING_DIR: infra/argocd-bootstrap
+  TF_VERSION: "1.16.3"
+
+permissions:
+  id-token: write
+  contents: read
+  actions: read
+  pull-requests: write
+
+jobs:
+  plan:
+    name: Terraform Plan (argocd-bootstrap)
+    if: github.event_name == 'pull_request' || inputs.terraform_plan_run_id == ''
+    runs-on: ubuntu-latest
+    environment: dev
+
+    env:
+      CLUSTER_NAME: ${{ vars.CLUSTER_NAME }}
+
+    defaults:
+      run:
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Initialize Terraform
+        run: terraform init -input=false
+
+      - name: Terraform Format
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      # Terraform can't plan this stack without the cluster so it fails rather skipping
+      - name: Check the cluster is ACTIVE
+        run: |
+          : "${CLUSTER_NAME:?Set CLUSTER_NAME in the dev environment variables}"
+          status=$(aws eks describe-cluster --name "$CLUSTER_NAME" --query cluster.status --output text 2>/dev/null || echo MISSING)
+          if [ "$status" != "ACTIVE" ]; then
+            echo "::error::$CLUSTER_NAME is $status, so the argocd-bootstrap plan can't run. Run Terraform workflow Apply first (and wait for it to finish), then re-run this check."
+            exit 1
+          fi
+
+      - name: Terraform Plan
+        run: terraform plan -input=false -out=tfplan.binary
+
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: tfplan-argocd-bootstrap
+          path: ${{ env.TF_WORKING_DIR }}/tfplan.binary
+          retention-days: 5
+
+      - name: Post plan comment
+        if: github.event_name == 'pull_request'
+        uses: borchero/terraform-plan-comment@v2
+        with:
+          token: ${{ github.token }}
+          planfile: tfplan.binary
+          working-directory: ${{ env.TF_WORKING_DIR }}
+          header: terraform plan (argocd-bootstrap)
+
+      - name: Add plan to run summary
+        run: |
+          {
+            echo "## argocd-bootstrap plan"
+            echo "To apply it: run **ArgoCD Bootstrap** with run ID \`${{ github.run_id }}\`."
+            echo '```'
+            terraform show -no-color tfplan.binary
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  apply:
+    name: Terraform Apply (argocd-bootstrap)
+    if: github.event_name == 'workflow_dispatch' && inputs.terraform_plan_run_id != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: dev
+    concurrency:
+      group: argocd-bootstrap-apply
+      cancel-in-progress: false
+
+    env:
+      CLUSTER_NAME: ${{ vars.CLUSTER_NAME }}
+      APP_HOST: ${{ vars.APP_HOST }}
+
+    defaults:
+      run:
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      # The pipeline role created the cluster, so it has cluster-admin through
+      # the cluster creator access entry (authentication_mode = API).
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      # The cluster may have been destroyed or be mid-rebuild since the plan was made.
+      - name: Check the cluster is ACTIVE
+        run: |
+          : "${CLUSTER_NAME:?Set CLUSTER_NAME in the dev environment variables}"
+          status=$(aws eks describe-cluster --name "$CLUSTER_NAME" --query cluster.status --output text 2>/dev/null || echo MISSING)
+          if [ "$status" != "ACTIVE" ]; then
+            echo "::error::$CLUSTER_NAME is $status. Run Terraform Apply first, then plan this workflow again."
+            exit 1
+          fi
+
+      - name: Initialize Terraform
+        run: terraform init -input=false
+
+      - name: Download Terraform Plan
+        uses: actions/download-artifact@v7
+        with:
+          name: tfplan-argocd-bootstrap
+          run-id: ${{ inputs.terraform_plan_run_id }}
+          path: ${{ env.TF_WORKING_DIR }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Terraform refuses a stale plan (state changed since it was made): re-plan and retry
+      - name: Terraform Apply
+        run: terraform apply -input=false tfplan.binary
+
+      - name: Configure kubectl
+        run: |
+          : "${CLUSTER_NAME:?Set CLUSTER_NAME in the dev environment variables}"
+          : "${APP_HOST:?Set APP_HOST in the dev environment variables}"
+          aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$AWS_REGION"
+
+      - name: Wait for all Applications to be Synced and Healthy
+        working-directory: .
+        run: |
+          expected=$(( 1 + $(grep -l '^kind: Application$' kubernetes/platform/apps/*.yaml | wc -l) \
+                         + $(find kubernetes/deploy/services -mindepth 1 -maxdepth 1 -type d | wc -l) ))
+          deadline=$(( $(date +%s) + 30 * 60 ))
+          while true; do
+            apps=$(kubectl -n argocd get applications -o json)
+            total=$(jq '.items | length' <<<"$apps")
+            ready=$(jq '[.items[] | select(.status.sync.status == "Synced" and .status.health.status == "Healthy")] | length' <<<"$apps")
+            echo "$ready/$expected Applications Synced and Healthy ($total found)"
+            if [ "$total" -ge "$expected" ] && [ "$ready" -eq "$total" ]; then
+              break
+            fi
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "::error::Timed out waiting for Applications"
+              exit 1
+            fi
+            sleep 20
+          done
+          kubectl -n argocd get applications
+
+      - name: Check the app is reachable
+        run: |
+          kubectl -n traefik get svc traefik
+          for i in $(seq 1 40); do
+            if curl -sfk --max-time 10 "https://$APP_HOST/healthz"; then
+              echo
+              echo "https://$APP_HOST is up ✅"
+              echo "App: https://$APP_HOST" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "Not reachable yet (attempt $i)"
+            sleep 15
+          done
+          echo "::error::https://$APP_HOST did not respond"
+          exit 1
+
+      - name: Diagnostics
+        if: failure()
+        run: |
+          set +e
+          kubectl -n argocd get applications
+          for app in $(kubectl -n argocd get applications -o json \
+              | jq -r '.items[] | select(.status.health.status != "Healthy" or .status.sync.status != "Synced") | .metadata.name'); do
+            echo "=== $app"
+            kubectl -n argocd get application "$app" -o json | jq '.status.conditions, .status.operationState.message, [.status.resources[]? | select(.health != null and .health.status != "Healthy")]'
+          done
+          kubectl get pods -A | grep -v -E 'Running|Completed'
+          kubectl get pvc -A | grep -v Bound
+          kubectl -n traefik get svc traefik -o wide
+          kubectl -n order-platform get ingressroute,certificate,externalsecret
+          kubectl -n external-dns logs deploy/external-dns --tail=50
+          dig +short "$APP_HOST"

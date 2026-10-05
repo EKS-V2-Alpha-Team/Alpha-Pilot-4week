@@ -64,6 +64,7 @@ services:
     build: ./services/order-service
     ports:
       - "8081:8081"
+      - "9093:9090"
     environment:
       <<: [*database-env, *floci-env]
       PGAPPNAME: order-service
@@ -86,6 +87,7 @@ services:
     build: ./services/payment-service
     ports:
       - "8083:8083"
+      - "9094:9090"
     environment:
       <<: [*database-env, *floci-env]
       PGAPPNAME: payment-service
@@ -97,6 +99,7 @@ services:
     build: ./services/notification-service
     ports:
       - "8084:8084"
+      - "9095:9090"   # Prometheus metrics (separate port, not routed)
     environment:
       <<: *database-env
       PGAPPNAME: notification-service
@@ -107,6 +110,7 @@ services:
     build: ./services/shipping-service
     ports:
       - "8085:8085"
+      - "9096:9090"
     environment:
       <<: [*database-env, *floci-env]
       PGAPPNAME: shipping-service
@@ -116,6 +120,8 @@ services:
 
   worker:
     build: ./services/worker
+    ports:
+      - "9098:9090"   # Prometheus metrics (separate port, not routed)
     environment:
       <<: [*floci-env, *service-urls]
     depends_on:
@@ -123,6 +129,8 @@ services:
 
   scheduler:
     build: ./services/scheduler
+    ports:
+      - "9099:9090"   # Prometheus metrics (separate port, not routed)
     environment:
       <<: *database-env
       PGAPPNAME: scheduler
@@ -133,6 +141,7 @@ services:
     build: ./services/dashboard-api
     ports:
       - "8086:8086"
+      - "9097:9090"
     environment:
       <<: *database-env
       PGAPPNAME: dashboard-api

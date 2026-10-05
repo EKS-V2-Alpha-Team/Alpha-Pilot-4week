@@ -84,7 +84,10 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: tfplan-argocd-bootstrap
-          path: ${{ env.TF_WORKING_DIR }}/tfplan.binary
+          path: |
+            ${{ env.TF_WORKING_DIR }}/tfplan.binary
+            ${{ env.TF_WORKING_DIR }}/.terraform.lock.hcl
+          include-hidden-files: true
           retention-days: 5
 
       - name: Post plan comment
@@ -151,9 +154,7 @@ jobs:
             exit 1
           fi
 
-      - name: Initialize Terraform
-        run: terraform init -input=false
-
+      # Before init, so init installs the provider versions from the plan's lock file.
       - name: Download Terraform Plan
         uses: actions/download-artifact@v7
         with:
@@ -161,6 +162,9 @@ jobs:
           run-id: ${{ inputs.terraform_plan_run_id }}
           path: ${{ env.TF_WORKING_DIR }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Initialize Terraform
+        run: terraform init -input=false
 
       # Terraform refuses a stale plan (state changed since it was made): re-plan and retry
       - name: Terraform Apply
@@ -179,7 +183,11 @@ jobs:
                          + $(find kubernetes/deploy/services -mindepth 1 -maxdepth 1 -type d | wc -l) ))
           deadline=$(( $(date +%s) + 30 * 60 ))
           while true; do
-            apps=$(kubectl -n argocd get applications -o json)
+            if ! apps=$(kubectl -n argocd get applications -o json); then
+              echo "kubectl failed, retrying"
+              sleep 20
+              continue
+            fi
             total=$(jq '.items | length' <<<"$apps")
             ready=$(jq '[.items[] | select(.status.sync.status == "Synced" and .status.health.status == "Healthy")] | length' <<<"$apps")
             echo "$ready/$expected Applications Synced and Healthy ($total found)"

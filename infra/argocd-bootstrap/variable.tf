@@ -27,6 +27,12 @@ variable "argocd_chart_version" {
   default     = "10.9.6"
 }
 
+variable "argocd_apps_chart_version" {
+  description = "argocd-apps Helm chart version (installs kubernetes/platform/root app)"
+  type        = string
+  default     = "2.0.6"
+}
+
 variable "repo_url" {
   description = "Git repo ArgoCD syncs from."
   type        = string

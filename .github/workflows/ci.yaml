@@ -155,10 +155,18 @@ jobs:
       contents: write
 
     steps:
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
       - name: Checkout Repository
         uses: actions/checkout@v6
         with:
           ref: main
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Write new tags into the dev values
         env:

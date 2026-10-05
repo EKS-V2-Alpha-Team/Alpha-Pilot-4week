@@ -2,6 +2,7 @@ prometheus:
   prometheusSpec:
     # Going with 7 days to check for weekly trends such as gradual changes or spikes
     retention: 7d
+    retentionSize: 18GB
     # Collect every ServiceMonitor, including the apps' (they have no release label).
     serviceMonitorSelectorNilUsesHelmValues: false
 
@@ -10,7 +11,6 @@ prometheus:
         cpu: 500m
         memory: 1Gi
       limits:
-        cpu: 1
         memory: 2Gi
 
     storageSpec:
@@ -29,7 +29,6 @@ alertmanager:
         cpu: 100m
         memory: 128Mi
       limits:
-        cpu: 250m
         memory: 256Mi
 
     storage: {}
@@ -44,7 +43,6 @@ grafana:
       cpu: 100m
       memory: 128Mi
     limits:
-      cpu: 250m
       memory: 256Mi
 
   service:

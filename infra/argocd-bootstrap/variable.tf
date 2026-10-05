@@ -40,7 +40,7 @@ variable "repo_url" {
 }
 
 variable "deploy_key_version" {
-  description = "Bump to push the current deploy key from Secrets Manager into the cluster (write-only)"
+  description = "Bump to re-send the repo secret (deploy key, repo_url) to the cluster"
   type        = number
   default     = 1
 }

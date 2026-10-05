@@ -36,12 +36,10 @@ resource "kubernetes_secret_v1" "repo" {
     }
   }
 
-  data = {
-    type = "git"
-    url  = var.repo_url
-  }
-
+  # bump deploy_key_version after changing any of the values in data_wo
   data_wo = {
+    type          = "git"
+    url           = var.repo_url
     sshPrivateKey = ephemeral.aws_secretsmanager_secret_version.deploy_key.secret_string
   }
   data_wo_revision = var.deploy_key_version

@@ -26,3 +26,15 @@ variable "argocd_chart_version" {
   type        = string
   default     = "10.9.6"
 }
+
+variable "repo_url" {
+  description = "Git repo ArgoCD syncs from."
+  type        = string
+  default     = "git@github.com:EKS-V2-Alpha-Team/Alpha-Pilot-4week.git"
+}
+
+variable "deploy_key_version" {
+  description = "Bump to push the current deploy key from Secrets Manager into the cluster (write-only)"
+  type        = number
+  default     = 1
+}

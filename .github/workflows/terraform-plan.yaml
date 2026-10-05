@@ -7,6 +7,7 @@ on:
       - main
     paths:
       - "infra/terraform/**"
+      - ".github/workflows/terraform-plan.yaml"
 
 permissions:
   id-token: write

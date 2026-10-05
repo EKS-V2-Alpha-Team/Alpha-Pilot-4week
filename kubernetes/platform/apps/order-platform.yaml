@@ -1,0 +1,47 @@
+# Generates one Application per folder in kubernetes/deploy/services/ (<svc>-dev),
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: order-platform-dev
+  namespace: argocd
+  annotations:
+    # After the platform (-3 to -1): the apps need Traefik, External Secrets and the CRDs.
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  goTemplate: true
+  # A typo in a template variable fails the ApplicationSet instead of rendering blanks.
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - git:
+        repoURL: git@github.com:EKS-V2-Alpha-Team/Alpha-Pilot-4week.git
+        revision: main
+        directories:
+          - path: kubernetes/deploy/services/*
+  template:
+    metadata:
+      name: "{{ .path.basename }}-dev"
+      # Removing a service folder also deletes its Kubernetes resources, not just the Application.
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: default
+      destination:
+        server: https://kubernetes.default.svc
+        # Must match the Pod Identity associations in Terraform.
+        namespace: order-platform
+      source:
+        repoURL: git@github.com:EKS-V2-Alpha-Team/Alpha-Pilot-4week.git
+        targetRevision: main
+        path: kubernetes/charts/microservice
+        helm:
+          releaseName: "{{ .path.basename }}"
+          valueFiles:
+            - ../../deploy/services/{{ .path.basename }}/values.yaml
+            - ../../deploy/envs/dev/common.yaml
+            - ../../deploy/envs/dev/{{ .path.basename }}.yaml
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true

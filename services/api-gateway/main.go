@@ -38,7 +38,12 @@ var (
 )
 
 func main() {
-	jwtSecret = []byte(getEnv("JWT_SECRET", "change-me-in-production"))
+	// No fallback: a built-in default would let anyone who reads the source forge a token.
+	secret := os.Getenv("JWT_SECRET")
+	if secret == "" {
+		log.Fatal("JWT_SECRET is required")
+	}
+	jwtSecret = []byte(secret)
 
 	var err error
 	rlConfig, err = loadRateLimitConfig()

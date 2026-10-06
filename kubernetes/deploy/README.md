@@ -54,7 +54,7 @@ Swap `order-service` for any other service folder name.
 | External Secrets + `ClusterSecretStore` | `DATABASE_URL`, `JWT_SECRET` | `aws-secrets-manager` |
 | RDS (Postgres) | `DATABASE_URL` | `<project>-<env>-db-credentials` and `<project>-<env>-db-connection` secret names in `envs/<env>/common.yaml`; SSL required |
 | Pod Identity association (order-service, worker) | SQS access | SA = service name, namespace `order-platform` |
-| Redis Service | api-gateway rate limiting | `redis` (not installed yet) |
+| Redis Service | api-gateway rate limiting | `redis`, namespace `order-platform` (`kubernetes/platform/redis`) |
 | Traefik + cert-manager `ClusterIssuer` | only when `ingressRoute.enabled` | entrypoint `websecure`, `letsencrypt-staging` / `letsencrypt-prod` |
 | Reloader | restart pods when secrets rotate | - |
 | Prometheus Operator | ServiceMonitors (skipped if the CRD is missing) | - |

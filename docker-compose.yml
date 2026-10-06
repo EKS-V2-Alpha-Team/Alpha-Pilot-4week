@@ -33,7 +33,7 @@ services:
       - "6379:6379"
 
   floci:
-    image: floci/floci:2.1.0-compat
+    image: floci/floci:2.2.0-compat
     ports:
       - "4566:4566"
     environment:

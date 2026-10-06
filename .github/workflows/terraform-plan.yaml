@@ -1,11 +1,13 @@
 name: Terraform Plan
 
 on:
+  workflow_dispatch:
   pull_request:
     branches:
       - main
     paths:
       - "infra/terraform/**"
+      - ".github/workflows/terraform-plan.yaml"
 
 permissions:
   id-token: write
@@ -15,6 +17,8 @@ permissions:
 jobs:
   terraform-plan:
     name: Run Terraform Plan
+    # Manual runs only from main
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
     defaults:
@@ -74,9 +78,22 @@ jobs:
           retention-days: 5
 
       - name: Post plan comment
+        if: github.event_name == 'pull_request'
         uses: borchero/terraform-plan-comment@v2
         with:
           token: ${{ github.token }}
           planfile: tfplan.binary
           working-directory: ./infra/terraform
           header: terraform plan
+
+      - name: Add plan to run summary
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          echo "Writing the plan to the run summary..."
+          {
+            echo "## Terraform plan"
+            echo "To apply, run the Terraform Apply workflow with terraform_plan_run_id=${{ github.run_id }}"
+            echo '```'
+            terraform show -no-color tfplan.binary
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

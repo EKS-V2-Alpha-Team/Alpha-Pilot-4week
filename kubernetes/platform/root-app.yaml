@@ -1,5 +1,4 @@
-# Applied once by hand after ArgoCD is installed. ArgoCD installs everything in apps/.
-# Every Application must use this same SSH repo URL so the ArgoCD deploy key matches.
+# Installed by Terraform (infra/argocd-bootstrap) right after ArgoCD. ArgoCD installs everything in apps/
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

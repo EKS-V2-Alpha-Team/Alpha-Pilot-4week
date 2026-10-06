@@ -1,0 +1,5 @@
+reloader:
+  # Restart pods by changing a pod-template annotation instead of adding an env var.
+  # Reloader's recommended setting with GitOps: the env var isn't in git, so ArgoCD
+  # (selfHeal) would treat it as drift.
+  reloadStrategy: annotations

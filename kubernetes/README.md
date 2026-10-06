@@ -8,6 +8,8 @@ Cluster tools the apps depend on. ArgoCD is installed once by hand; ArgoCD insta
 | `platform/root-app.yaml`                           | Root app, applied by hand once; points at `platform/apps/`                                        |
 | `platform/apps/`                                   | One ArgoCD Application per tool: upstream chart at a pinned version + our values file             |
 | `platform/manifests/`                              | Our own cluster resources (ClusterIssuers, ClusterSecretStore, Karpenter EC2NodeClass + NodePool, `order-platform` namespace, default gp3 StorageClass) |
+| `platform/apps/`                                   | One ArgoCD Application per tool (pinned chart + our values), plus the services ApplicationSet     |
+| `platform/manifests/`                              | Our own cluster resources (ClusterIssuers, ClusterSecretStore, Karpenter EC2NodeClass + NodePool) |
 | `helm-values/`                                     | Values for every chart. Non-obvious settings are explained inline                                 |
 | `charts/microservice/`                             | Shared chart for the 9 services (see `deploy/README.md`)                                          |
 | `deploy/`                                          | Per-service and per-environment values for that chart                                             |
@@ -27,7 +29,7 @@ Cluster tools the apps depend on. ArgoCD is installed once by hand; ArgoCD insta
 | Reloader                     | Restarts pods when a secret rotates                                                                | -1   |
 | Redis (StatefulSet, 1Gi gp3)  | Rate-limit counters for api-gateway, in `order-platform`                                           | -1   |
 | kube-prometheus-stack        | Prometheus, Grafana, Alertmanager                                                                  | -1   |
-| The 9 services (ALPHA-91)    | The order platform apps, from the shared microservice chart                                        | 0    |
+| The 9 services               | `order-platform.yaml` ApplicationSet: one Application per service                                  | 0    |
 
 A wave starts only when the previous one is healthy (health check in `argocd-values.yaml`).
 

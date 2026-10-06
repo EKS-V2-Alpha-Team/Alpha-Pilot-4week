@@ -16,6 +16,11 @@ spec:
       targetRevision: 2.2.18
       helm:
         releaseName: reloader
+        valueFiles:
+          - $values/kubernetes/helm-values/reloader-values.yaml
+    - repoURL: git@github.com:EKS-V2-Alpha-Team/Alpha-Pilot-4week.git
+      targetRevision: main
+      ref: values
   syncPolicy:
     automated:
       prune: true

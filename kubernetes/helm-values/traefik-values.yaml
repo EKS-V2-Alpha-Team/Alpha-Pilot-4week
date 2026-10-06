@@ -35,6 +35,14 @@ ports:
       default: true
     exposedPort: 80
     protocol: TCP
+    # http:// redirects to https://
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: true
+          priority: 1
 
   websecure:
     port: 8443

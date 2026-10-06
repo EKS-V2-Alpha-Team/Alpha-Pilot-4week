@@ -3,3 +3,7 @@ image:
   tag: inventory-service-af8cb4e1
 
 replicaCount: 1
+
+env:
+  # Dev only: gives the dashboard a catalogue to order from. Never set in prod.
+  SEED_DEMO_PRODUCTS: "true"

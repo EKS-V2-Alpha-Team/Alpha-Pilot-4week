@@ -80,6 +80,7 @@ services:
     environment:
       <<: *database-env
       PGAPPNAME: inventory-service
+      SEED_DEMO_PRODUCTS: "true"   # local demo catalogue; see seedDemoProducts
     depends_on:
       - postgres
 

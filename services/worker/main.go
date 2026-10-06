@@ -51,6 +51,7 @@ func main() {
 		log.Fatalf("load AWS config: %v", err)
 	}
 	queue := &sqsQueue{client: sqs.NewFromConfig(awsCfg), url: sqsQueueURL}
+	startMetricsServer(getEnv("METRICS_PORT", "9090"))
 
 	// Health check endpoint
 	go func() {
@@ -85,6 +86,7 @@ func pollAndProcess(ctx context.Context, queue *sqsQueue, services map[string]st
 		messages, err := queue.receive(ctx)
 		if err != nil {
 			if ctx.Err() == nil {
+				workerReceiveErrors.Inc() // NEW
 				log.Printf("Receive failed: %v", err)
 				time.Sleep(5 * time.Second)
 			}
@@ -94,26 +96,34 @@ func pollAndProcess(ctx context.Context, queue *sqsQueue, services map[string]st
 		for _, msg := range messages {
 			var event Event
 			if err := json.Unmarshal([]byte(aws.ToString(msg.Body)), &event); err != nil {
+				workerEvents.WithLabelValues("unknown", "parse_failed").Inc() // NEW
 				// Left on the queue: after 3 receives SQS moves it to the DLQ.
 				log.Printf("Failed to parse message %s: %v", aws.ToString(msg.MessageId), err)
 				continue
 			}
 
+			eventType := eventTypeLabel(event.Type) // NEW
 			log.Printf("Processing event %s (%s)", event.Type, event.ID)
 
-			if err := handleEvent(client, services, event); err != nil {
+			start := time.Now()                                                                 // NEW
+			handleErr := handleEvent(client, services, event)                                   // CHANGED
+			workerEventDuration.WithLabelValues(eventType).Observe(time.Since(start).Seconds()) // NEW
+			if handleErr != nil {
+				workerEvents.WithLabelValues(eventType, "handle_failed").Inc() // NEW
 				// Not deleted: SQS hands it out again after the visibility timeout
 				// and moves it to the DLQ after 3 receives.
-				log.Printf("Failed to handle event %s (%s): %v", event.Type, event.ID, err)
+				log.Printf("Failed to handle event %s (%s): %v", event.Type, event.ID, handleErr)
 				continue
 			}
 
 			if err := queue.delete(ctx, msg.ReceiptHandle); err != nil {
+				workerEvents.WithLabelValues(eventType, "delete_failed").Inc() // NEW
 				// Handled but not deleted: it comes back, which is safe because reserve,
 				// charge and status changes can be repeated (ALPHA-51).
 				log.Printf("Failed to delete event %s (%s): %v", event.Type, event.ID, err)
 				continue
 			}
+			workerEvents.WithLabelValues(eventType, "success").Inc() // NEW
 			log.Printf("Done: %s (%s)", event.Type, event.ID)
 		}
 	}

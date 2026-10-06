@@ -226,11 +226,20 @@ func createOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Prices and stock come from inventory; whatever price the request carried is dropped.
+	priced, rej := priceItems(r.Context(), req.Items)
+	if rej != nil {
+		httpError(w, rej.msg, rej.status)
+		return
+	}
+	req.Items = priced
+
 	// Calculate total
 	var total float64
 	for _, item := range req.Items {
 		total += item.Price * float64(item.Quantity)
 	}
+	total = roundMoney(total) // 3 x 79.99 is 239.96999999999997 as a float
 
 	currency := req.Currency
 	if currency == "" {

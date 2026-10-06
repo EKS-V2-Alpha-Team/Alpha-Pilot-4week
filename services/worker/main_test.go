@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -17,14 +18,15 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 )
 
-// fakeServices stands in for inventory, payment and order-service. It records every
-// call ("POST /reserve", "PUT /status confirmed", ...) and answers with the status
-// codes the test sets.
+// fakeServices stands in for inventory, payment, order, shipping and notification
+// service. It records every call ("POST /reserve", "PUT /status confirmed", ...) and
+// answers with the status codes the test sets.
 type fakeServices struct {
 	mu          sync.Mutex
 	calls       []string
-	codes       map[string]int // path -> status code, default 200
-	orderStatus string         // what GET /42 reports, default "pending"
+	bodies      map[string]map[string]interface{} // call -> last JSON body sent
+	codes       map[string]int                    // path -> status code, default 200
+	orderStatus string                            // what GET /42 reports, default "pending"
 }
 
 func newFakeServices(t *testing.T, codes map[string]int) (*fakeServices, map[string]string) {
@@ -34,30 +36,47 @@ func newFakeServices(t *testing.T, codes map[string]int) (*fakeServices, map[str
 
 func newFakeServicesWithStatus(t *testing.T, codes map[string]int, orderStatus string) (*fakeServices, map[string]string) {
 	t.Helper()
-	f := &fakeServices{codes: codes, orderStatus: orderStatus}
+	f := &fakeServices{codes: codes, orderStatus: orderStatus, bodies: map[string]map[string]interface{}{}}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		call := r.Method + " " + r.URL.Path
-		if r.URL.Path == "/status" {
-			var body struct {
-				NewStatus string `json:"new_status"`
-			}
+		var body map[string]interface{}
+		if r.Method != http.MethodGet {
 			json.NewDecoder(r.Body).Decode(&body)
-			call += " " + body.NewStatus
+		}
+		// Calls that differ by what they ask for are recorded with it.
+		switch {
+		case r.URL.Path == "/status":
+			call += " " + body["new_status"].(string)
+		case r.URL.Path == "/send":
+			call += " " + body["template"].(string)
+		case strings.HasPrefix(r.URL.Path, "/shipments/by-order/"):
+			call += " " + body["status"].(string)
 		}
 		f.mu.Lock()
 		f.calls = append(f.calls, call)
+		f.bodies[call] = body
 		code, ok := f.codes[r.URL.Path]
 		f.mu.Unlock()
 		if !ok {
 			code = http.StatusOK
 		}
 		w.WriteHeader(code)
-		if r.Method == http.MethodGet && code == http.StatusOK {
-			json.NewEncoder(w).Encode(map[string]string{"status": f.orderStatus})
+		if code != http.StatusOK {
+			return
+		}
+		switch {
+		case r.Method == http.MethodGet:
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"status": f.orderStatus, "customer_id": "sara@example.com", "total": 239.97, "currency": "GBP",
+			})
+		case strings.HasPrefix(r.URL.Path, "/shipments/by-order/"):
+			json.NewEncoder(w).Encode(map[string]interface{}{"tracking_number": "RM123"})
 		}
 	}))
 	t.Cleanup(srv.Close)
-	return f, map[string]string{"inventory": srv.URL, "payment": srv.URL, "order": srv.URL}
+	return f, map[string]string{
+		"inventory": srv.URL, "payment": srv.URL, "order": srv.URL, "shipping": srv.URL, "notification": srv.URL,
+	}
 }
 
 func orderCreated(t *testing.T) Event {
@@ -113,7 +132,15 @@ func TestDeclinedCardReleasesStockAndCancels(t *testing.T) {
 	if err != nil {
 		t.Fatalf("got error %v, want nil (final answer, message deleted)", err)
 	}
-	assertCalls(t, calls, []string{"GET /42", "POST /reserve", "POST /charge", "POST /release", "PUT /status cancelled"})
+	assertCalls(t, calls, []string{"GET /42", "POST /reserve", "POST /charge", "POST /release", "PUT /status cancelled", "POST /send payment_failed"})
+}
+
+func TestFailedPaymentEmailDoesNotRetryTheOrder(t *testing.T) {
+	calls, err := run(t, map[string]int{"/reserve": 201, "/charge": 402, "/send": 500}, orderCreated(t))
+	if err != nil {
+		t.Fatalf("got error %v, want nil: the order is already cancelled, only the email failed", err)
+	}
+	assertCalls(t, calls, []string{"GET /42", "POST /reserve", "POST /charge", "POST /release", "PUT /status cancelled", "POST /send payment_failed"})
 }
 
 func TestPaymentOutageKeepsMessageForRetry(t *testing.T) {
@@ -141,7 +168,7 @@ func TestCommitFailureKeepsMessageForRetry(t *testing.T) {
 }
 
 func TestEventsWithoutHandlerAreSkipped(t *testing.T) {
-	calls, err := run(t, nil, Event{ID: "order-service-2", Type: "order.status_changed", Payload: json.RawMessage(`{}`)})
+	calls, err := run(t, nil, Event{ID: "order-service-2", Type: "shipment.created", Payload: json.RawMessage(`{}`)})
 	if err != nil {
 		t.Fatalf("got error %v, want nil (deleted, not sent to the DLQ)", err)
 	}
@@ -211,7 +238,8 @@ func TestRedeliveryOfCancelledOrderNeverChargesAgain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("got error %v, want nil", err)
 	}
-	assertCalls(t, calls, []string{"GET /42", "POST /release"})
+	// The cancel came in while this message was in flight: undo everything it took.
+	assertCalls(t, calls, []string{"GET /42", "POST /release", "POST /restock", "POST /refund"})
 }
 
 func TestOrderServiceDownKeepsMessageForRetry(t *testing.T) {
@@ -228,4 +256,164 @@ func TestReleaseFailureOnCancelledOrderKeepsMessageForRetry(t *testing.T) {
 		t.Fatal("got nil, want an error so the message stays on the queue")
 	}
 	assertCalls(t, calls, []string{"GET /42", "POST /release"})
+}
+
+func statusChanged(t *testing.T, oldStatus, newStatus string) Event {
+	t.Helper()
+	payload, _ := json.Marshal(map[string]interface{}{"order_id": 42, "old_status": oldStatus, "new_status": newStatus})
+	return Event{ID: "order-service-9", Type: "order.status_changed", Payload: payload}
+}
+
+// The case behind the live bug: a paid, confirmed order is cancelled. Stock goes back
+// and the charge is refunded.
+func TestCancelledOrderGetsStockAndMoneyBack(t *testing.T) {
+	calls, err := run(t, nil, statusChanged(t, "confirmed", "cancelled"))
+	if err != nil {
+		t.Fatalf("got error %v, want nil", err)
+	}
+	assertCalls(t, calls, []string{"POST /release", "POST /restock", "POST /refund", "PUT /shipments/by-order/42 cancelled"})
+}
+
+// Order that never got charged: payment-service answers 404 and that is fine.
+func TestCancelledOrderThatWasNeverChargedIsStillFine(t *testing.T) {
+	calls, err := run(t, map[string]int{"/refund": 404, "/shipments/by-order/42": 404}, statusChanged(t, "pending", "cancelled"))
+	if err != nil {
+		t.Fatalf("got error %v, want nil (nothing to refund, no shipment to cancel)", err)
+	}
+	assertCalls(t, calls, []string{"POST /release", "POST /restock", "POST /refund", "PUT /shipments/by-order/42 cancelled"})
+}
+
+func runStatus(t *testing.T, codes map[string]int, orderStatus string, event Event) (*fakeServices, error) {
+	t.Helper()
+	f, services := newFakeServicesWithStatus(t, codes, orderStatus)
+	err := handleEvent(&http.Client{Timeout: 2 * time.Second}, services, event)
+	return f, err
+}
+
+func TestConfirmedOrderEmailsTheCustomer(t *testing.T) {
+	f, err := runStatus(t, nil, "confirmed", statusChanged(t, "pending", "confirmed"))
+	if err != nil {
+		t.Fatalf("got error %v, want nil", err)
+	}
+	assertCalls(t, f.calls, []string{"GET /42", "POST /send order_confirmed"})
+	sent := f.bodies["POST /send order_confirmed"]
+	if sent["recipient"] != "sara@example.com" || sent["dedupe_key"] != "order_confirmed:42" {
+		t.Errorf("email addressed wrongly: %v", sent)
+	}
+	data := sent["data"].(map[string]interface{})
+	if data["Total"] != "239.97" || data["CustomerName"] != "sara" || data["Currency"] != "GBP" || data["OrderID"] != float64(42) {
+		t.Errorf("email data wrong: %v", data)
+	}
+}
+
+func TestProcessingOrderGetsAShipmentWithPlaceholderAddress(t *testing.T) {
+	f, err := runStatus(t, map[string]int{"/shipments": 201}, "processing", statusChanged(t, "confirmed", "processing"))
+	if err != nil {
+		t.Fatalf("got error %v, want nil", err)
+	}
+	assertCalls(t, f.calls, []string{"GET /42", "POST /shipments"})
+	sent := f.bodies["POST /shipments"]
+	if sent["order_id"] != float64(42) || sent["recipient_name"] != "sara@example.com" {
+		t.Errorf("shipment request wrong: %v", sent)
+	}
+	if addr, _ := sent["address_line1"].(string); !strings.HasPrefix(addr, "PLACEHOLDER") {
+		t.Errorf("address_line1 %q, want the placeholder", addr)
+	}
+}
+
+func TestShippedOrderMovesShipmentAndEmailsTrackingNumber(t *testing.T) {
+	f, err := runStatus(t, nil, "shipped", statusChanged(t, "processing", "shipped"))
+	if err != nil {
+		t.Fatalf("got error %v, want nil", err)
+	}
+	assertCalls(t, f.calls, []string{"GET /42", "POST /shipments", "PUT /shipments/by-order/42 in_transit", "POST /send order_shipped"})
+	data := f.bodies["POST /send order_shipped"]["data"].(map[string]interface{})
+	if data["TrackingNumber"] != "RM123" {
+		t.Errorf("tracking number %v, want RM123 from the shipment", data["TrackingNumber"])
+	}
+}
+
+func TestDeliveredOrderMovesShipmentAndEmailsTheCustomer(t *testing.T) {
+	f, err := runStatus(t, nil, "delivered", statusChanged(t, "shipped", "delivered"))
+	if err != nil {
+		t.Fatalf("got error %v, want nil", err)
+	}
+	assertCalls(t, f.calls, []string{"GET /42", "POST /shipments", "PUT /shipments/by-order/42 delivered", "POST /send order_delivered"})
+}
+
+// A late event for an order that was cancelled in the meantime must not email or ship.
+func TestLateStatusEventsForCancelledOrderDoNothing(t *testing.T) {
+	for _, next := range []string{"confirmed", "processing", "shipped", "delivered"} {
+		f, err := runStatus(t, nil, "cancelled", statusChanged(t, "pending", next))
+		if err != nil {
+			t.Fatalf("%s: got error %v, want nil", next, err)
+		}
+		assertCalls(t, f.calls, []string{"GET /42"})
+	}
+}
+
+func TestShippingOutageKeepsStatusEventForRetry(t *testing.T) {
+	f, err := runStatus(t, map[string]int{"/shipments": 500}, "processing", statusChanged(t, "confirmed", "processing"))
+	if err == nil {
+		t.Fatal("got nil, want an error so the shipment is not forgotten")
+	}
+	assertCalls(t, f.calls, []string{"GET /42", "POST /shipments"})
+}
+
+func TestNotificationOutageKeepsConfirmedEventForRetry(t *testing.T) {
+	f, err := runStatus(t, map[string]int{"/send": 503}, "confirmed", statusChanged(t, "pending", "confirmed"))
+	if err == nil {
+		t.Fatal("got nil, want an error so the email is not forgotten")
+	}
+	assertCalls(t, f.calls, []string{"GET /42", "POST /send order_confirmed"})
+}
+
+// The shipment update is done before the email, so a retry after an email failure just
+// repeats a shipment update that changes nothing.
+func TestShippedEmailFailureKeepsEventForRetry(t *testing.T) {
+	f, err := runStatus(t, map[string]int{"/send": 500}, "shipped", statusChanged(t, "processing", "shipped"))
+	if err == nil {
+		t.Fatal("got nil, want an error")
+	}
+	assertCalls(t, f.calls, []string{"GET /42", "POST /shipments", "PUT /shipments/by-order/42 in_transit", "POST /send order_shipped"})
+}
+
+func TestCancelShipmentFailureKeepsCancelEventForRetry(t *testing.T) {
+	calls, err := run(t, map[string]int{"/shipments/by-order/42": 500}, statusChanged(t, "processing", "cancelled"))
+	if err == nil {
+		t.Fatal("got nil, want an error")
+	}
+	assertCalls(t, calls, []string{"POST /release", "POST /restock", "POST /refund", "PUT /shipments/by-order/42 cancelled"})
+}
+
+func TestUnknownStatusIsSkipped(t *testing.T) {
+	calls, err := run(t, nil, statusChanged(t, "pending", "teleported"))
+	if err != nil {
+		t.Fatalf("got error %v, want nil", err)
+	}
+	assertCalls(t, calls, nil)
+}
+
+func TestRefundFailureKeepsCancelEventForRetry(t *testing.T) {
+	calls, err := run(t, map[string]int{"/refund": 500}, statusChanged(t, "confirmed", "cancelled"))
+	if err == nil {
+		t.Fatal("got nil, want an error so the money is not forgotten")
+	}
+	assertCalls(t, calls, []string{"POST /release", "POST /restock", "POST /refund"})
+}
+
+func TestRestockFailureKeepsCancelEventForRetry(t *testing.T) {
+	calls, err := run(t, map[string]int{"/restock": 500}, statusChanged(t, "confirmed", "cancelled"))
+	if err == nil {
+		t.Fatal("got nil, want an error so the stock is not forgotten")
+	}
+	// Stops before the refund: the retry redoes all three, and each is safe to repeat.
+	assertCalls(t, calls, []string{"POST /release", "POST /restock"})
+}
+
+func TestBadStatusChangedPayloadKeepsMessageForRetry(t *testing.T) {
+	_, err := run(t, nil, Event{ID: "x", Type: "order.status_changed", Payload: json.RawMessage(`not json`)})
+	if err == nil {
+		t.Fatal("got nil, want an error")
+	}
 }

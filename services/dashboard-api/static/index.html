@@ -44,7 +44,7 @@
 
         .form-row { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
         .form-row input, .form-row select { padding: 8px 12px; border: 1px solid #30363d; border-radius: 6px; background: #0d1117; color: #e1e4e8; font-size: 0.85rem; }
-        .form-row input { flex: 1; min-width: 120px; }
+        .form-row input, .form-row select#order-product { flex: 1; min-width: 120px; }
 
         .tabs { display: flex; gap: 4px; margin-bottom: 20px; border-bottom: 1px solid #30363d; padding-bottom: 8px; }
         .tab { padding: 8px 16px; border-radius: 6px 6px 0 0; cursor: pointer; font-size: 0.85rem; color: #8b949e; }
@@ -89,9 +89,8 @@
             <div class="section">
                 <h2>Create Order</h2>
                 <div class="form-row">
-                    <input type="text" id="order-product" placeholder="Product ID (e.g. kb-001)">
+                    <select id="order-product"><option value="">Loading products...</option></select>
                     <input type="number" id="order-qty" placeholder="Qty" value="1" min="1" style="max-width:80px">
-                    <input type="number" id="order-price" placeholder="Price" step="0.01" style="max-width:100px">
                     <button class="btn btn-primary" onclick="createOrder()">Place Order</button>
                 </div>
             </div>
@@ -198,12 +197,16 @@
             return { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token };
         }
 
+        // Errors stay up longer than confirmations, and a new message restarts the clock
+        // (before, an earlier message's timer could hide a newer one early).
+        let toastTimer;
         function toast(msg, error) {
             const t = document.getElementById('toast');
             t.textContent = msg;
             t.className = error ? 'error' : '';
             t.style.display = 'block';
-            setTimeout(() => t.style.display = 'none', 3000);
+            clearTimeout(toastTimer);
+            toastTimer = setTimeout(() => t.style.display = 'none', error ? 8000 : 4000);
         }
 
         function showTab(name) {
@@ -266,13 +269,12 @@
         async function createOrder() {
             const product = document.getElementById('order-product').value;
             const qty = parseInt(document.getElementById('order-qty').value) || 1;
-            const price = parseFloat(document.getElementById('order-price').value) || 0;
-            if (!product || !price) { toast('Fill in product, qty and price', true); return; }
+            if (!product) { toast('Pick a product', true); return; }
 
             try {
                 const r = await fetch(API + '/api/orders/', {
                     method: 'POST', headers: headers(),
-                    body: JSON.stringify({ items: [{ product_id: product, quantity: qty, price: price }] })
+                    body: JSON.stringify({ items: [{ product_id: product, quantity: qty }] })
                 });
                 const d = await r.json();
                 if (r.ok) { toast('Order #' + d.id + ' created'); refreshAll(); }
@@ -292,10 +294,32 @@
         }
 
         // --- Inventory ---
+        // The order form only offers products that exist and have stock. The order-service
+        // still checks every order, so this is a convenience, not the guard.
+        function populateOrderProducts(products) {
+            const sel = document.getElementById('order-product');
+            const previous = sel.value;
+            sel.replaceChildren();
+            if (!products || !products.length) {
+                sel.add(new Option('No products yet', ''));
+                return;
+            }
+            products.forEach(p => {
+                const avail = p.available ?? (p.stock - p.reserved);
+                const opt = new Option(`${p.name} (${p.id}) - ${money(p.price)} - ${avail} available`, p.id);
+                opt.disabled = avail < 1;
+                sel.add(opt);
+            });
+            // The page refreshes every 30s; keep what the person already picked.
+            const keep = [...sel.options].find(o => o.value === previous && !o.disabled);
+            sel.value = keep ? previous : ([...sel.options].find(o => !o.disabled) || sel.options[0]).value;
+        }
+
         async function loadInventory() {
             try {
                 const r = await fetch(API + '/api/inventory/products', { headers: headers() });
                 const products = await r.json();
+                populateOrderProducts(products);
                 const tbody = document.getElementById('inventory-table');
                 if (!products || !products.length) { tbody.innerHTML = '<tr><td colspan="7" style="color:#8b949e">No products yet</td></tr>'; return; }
                 tbody.innerHTML = products.map(p => {
@@ -332,7 +356,7 @@
                 const d = await r.json();
                 document.getElementById('revenue-info').innerHTML = `
                     <div class="grid">
-                        <div class="card"><div class="card-label">Total Revenue</div><div class="card-value green">${money(d.total)}</div></div>
+                        <div class="card"><div class="card-label">Charged</div><div class="card-value green">${money(d.total)}</div></div>
                         <div class="card"><div class="card-label">Refunded</div><div class="card-value red">${money(d.refunded)}</div></div>
                         <div class="card"><div class="card-label">Net</div><div class="card-value blue">${money(d.net)}</div></div>
                     </div>

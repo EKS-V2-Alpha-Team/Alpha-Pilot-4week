@@ -297,6 +297,12 @@ func isUniqueViolation(err error) bool {
 	return errors.As(err, &pqErr) && pqErr.Code == "23505"
 }
 
+// handleRefund refunds a completed charge, named either by payment_id or by order_id
+// (the worker refunds by order when a paid order is cancelled).
+//
+// Safe to repeat and to run twice at once: the charge row is locked for the whole
+// refund, so a second request waits and then sees the charge already refunded. By
+// order_id that is a 200 ("already_refunded"); by payment_id it stays a 409.
 func handleRefund(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		httpError(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -305,6 +311,7 @@ func handleRefund(w http.ResponseWriter, r *http.Request) {
 
 	var req struct {
 		PaymentID string  `json:"payment_id"`
+		OrderID   int     `json:"order_id"`
 		Amount    float64 `json:"amount"`
 		Reason    string  `json:"reason"`
 	}
@@ -312,21 +319,57 @@ func handleRefund(w http.ResponseWriter, r *http.Request) {
 		httpError(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
+	if req.PaymentID == "" && req.OrderID <= 0 {
+		httpError(w, "payment_id or order_id is required", http.StatusBadRequest)
+		return
+	}
 
-	// Get original payment
+	tx, err := db.Begin()
+	if err != nil {
+		httpError(w, "transaction failed", http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback()
+
+	// Find the original charge and lock it. Refund rows are payments too, so they are
+	// excluded: a refund cannot be refunded.
+	var paymentID, paymentStatus, customerID, currency string
 	var originalAmount float64
 	var orderID int
-	var paymentStatus, customerID, currency string
-	err := db.QueryRow(
-		"SELECT amount, order_id, status, customer_id, currency FROM payments WHERE id = $1",
-		req.PaymentID,
-	).Scan(&originalAmount, &orderID, &paymentStatus, &customerID, &currency)
+	if req.PaymentID != "" {
+		err = tx.QueryRow(
+			`SELECT id, amount, order_id, status, customer_id, currency FROM payments
+			 WHERE id = $1 AND method IS DISTINCT FROM 'refund' FOR UPDATE`,
+			req.PaymentID,
+		).Scan(&paymentID, &originalAmount, &orderID, &paymentStatus, &customerID, &currency)
+	} else {
+		err = tx.QueryRow(
+			`SELECT id, amount, order_id, status, customer_id, currency FROM payments
+			 WHERE order_id = $1 AND method IS DISTINCT FROM 'refund'
+			   AND status IN ('completed', 'partially_refunded', 'refunded') FOR UPDATE`,
+			req.OrderID,
+		).Scan(&paymentID, &originalAmount, &orderID, &paymentStatus, &customerID, &currency)
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		httpError(w, "no charge found to refund", http.StatusNotFound)
+		return
+	}
 	if err != nil {
-		httpError(w, "payment not found", http.StatusNotFound)
+		log.Printf("Refund lookup failed: %v", err)
+		httpError(w, "refund failed", http.StatusInternalServerError)
 		return
 	}
 
 	if paymentStatus != "completed" {
+		if req.PaymentID == "" {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"order_id":   orderID,
+				"payment_id": paymentID,
+				"status":     "already_refunded",
+			})
+			return
+		}
 		httpError(w, "can only refund completed payments", http.StatusConflict)
 		return
 	}
@@ -337,35 +380,47 @@ func handleRefund(w http.ResponseWriter, r *http.Request) {
 	}
 
 	refundID := generatePaymentID()
+	reason := req.Reason
 
-	tx, err := db.Begin()
-	if err != nil {
-		httpError(w, "transaction failed", http.StatusInternalServerError)
-		return
-	}
-	defer tx.Rollback()
-
-	_, err = tx.Exec(
+	if _, err := tx.Exec(
 		`INSERT INTO payments (id, order_id, customer_id, amount, currency, status, method, reference)
 		 VALUES ($1, $2, $3, $4, $5, 'completed', 'refund', $6)`,
-		refundID, orderID, customerID, refundAmount, currency, req.PaymentID,
-	)
-	if err != nil {
-		httpError(w, "refund insert failed", http.StatusInternalServerError)
+		refundID, orderID, customerID, refundAmount, currency, paymentID,
+	); err != nil {
+		log.Printf("Refund insert failed: %v", err)
+		httpError(w, "refund failed", http.StatusInternalServerError)
 		return
 	}
 
-	// Reverse ledger entries
-	tx.Exec(
+	// Double-entry, the mirror image of a charge (item 20): the customer is credited and
+	// revenue is debited by the same amount, so the ledger still balances.
+	if _, err := tx.Exec(
 		`INSERT INTO ledger_entries (payment_id, entry_type, credit, currency, description)
 		 VALUES ($1, 'refund', $2, $3, $4)`,
-		refundID, refundAmount, currency, fmt.Sprintf("Refund for payment %s: %s", req.PaymentID, req.Reason),
-	)
+		refundID, refundAmount, currency, fmt.Sprintf("Order #%d refund: %s", orderID, reason),
+	); err != nil {
+		log.Printf("Refund ledger (customer side) failed: %v", err)
+		httpError(w, "refund failed", http.StatusInternalServerError)
+		return
+	}
+	if _, err := tx.Exec(
+		`INSERT INTO ledger_entries (payment_id, entry_type, debit, currency, description)
+		 VALUES ($1, 'revenue_reversal', $2, $3, $4)`,
+		refundID, refundAmount, currency, fmt.Sprintf("Order #%d revenue reversed", orderID),
+	); err != nil {
+		log.Printf("Refund ledger (revenue side) failed: %v", err)
+		httpError(w, "refund failed", http.StatusInternalServerError)
+		return
+	}
 
+	newStatus := "partially_refunded"
 	if refundAmount >= originalAmount {
-		tx.Exec("UPDATE payments SET status = 'refunded', updated_at = NOW() WHERE id = $1", req.PaymentID)
-	} else {
-		tx.Exec("UPDATE payments SET status = 'partially_refunded', updated_at = NOW() WHERE id = $1", req.PaymentID)
+		newStatus = "refunded"
+	}
+	if _, err := tx.Exec("UPDATE payments SET status = $1, updated_at = NOW() WHERE id = $2", newStatus, paymentID); err != nil {
+		log.Printf("Refund status update failed: %v", err)
+		httpError(w, "refund failed", http.StatusInternalServerError)
+		return
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -375,16 +430,17 @@ func handleRefund(w http.ResponseWriter, r *http.Request) {
 
 	publishEvent("payment.refunded", map[string]interface{}{
 		"refund_id":  refundID,
-		"payment_id": req.PaymentID,
+		"payment_id": paymentID,
 		"order_id":   orderID,
 		"amount":     refundAmount,
-		"reason":     req.Reason,
+		"reason":     reason,
 	})
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"refund_id":  refundID,
-		"payment_id": req.PaymentID,
+		"payment_id": paymentID,
+		"order_id":   orderID,
 		"amount":     refundAmount,
 		"status":     "completed",
 	})

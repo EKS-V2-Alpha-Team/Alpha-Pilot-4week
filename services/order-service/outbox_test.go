@@ -54,6 +54,8 @@ func setupTestDB(t *testing.T) {
 		t.Fatalf("ping db: %v", err)
 	}
 	migrate()
+	// Orders are priced by inventory, so these tests use a stand-in that knows "p1".
+	useFakeInventory(t, map[string]catalogueEntry{"p1": {Price: 50, Available: 1000}})
 	if _, err := db.Exec(`TRUNCATE order_outbox, order_events, orders RESTART IDENTITY CASCADE`); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}

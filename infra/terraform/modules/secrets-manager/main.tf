@@ -70,3 +70,21 @@ resource "aws_secretsmanager_secret_version" "db_credentials" {
   })
   secret_string_wo_version = 1
 }
+
+# creating db host and port connection
+resource "aws_secretsmanager_secret" "db_connection" {
+  name       = "${var.project_name}-${var.environment}-db-connection"
+  kms_key_id = aws_kms_key.secret_encryption.arn
+
+
+  recovery_window_in_days = 0
+}
+
+resource "aws_secretsmanager_secret_version" "db_connection" {
+  secret_id = aws_secretsmanager_secret.db_connection.id
+
+  secret_string = jsonencode({
+    host = "postgres.order-platform.svc.cluster.local"
+    port = 5432
+  })
+}

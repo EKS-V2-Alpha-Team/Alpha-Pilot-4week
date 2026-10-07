@@ -8,3 +8,4 @@ env:
 database:
   credentialsSecret: eks-v2-dev-db-credentials
   connectionSecret: eks-v2-dev-db-connection
+  sslMode: disable

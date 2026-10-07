@@ -6,7 +6,7 @@ release per service; the release name **is** the service name.
 ```
 kubernetes/deploy/
   services/<svc>/values.yaml   # what the service is: ports, env, DB access, resources
-  envs/<env>/common.yaml       # env-wide: ECR repo, AWS region, RDS endpoint + secret
+  envs/<env>/common.yaml       # env-wide: ECR repo, AWS region, database connection + secrets
   envs/<env>/<svc>.yaml        # env + service: image tag (CI writes it), replicas, env-only config
 ```
 
@@ -52,7 +52,7 @@ Swap `order-service` for any other service folder name.
 | Dependency | Why | Name the chart expects |
 |---|---|---|
 | External Secrets + `ClusterSecretStore` | `DATABASE_URL`, `JWT_SECRET` | `aws-secrets-manager` |
-| RDS (Postgres) | `DATABASE_URL` | `<project>-<env>-db-credentials` and `<project>-<env>-db-connection` secret names in `envs/<env>/common.yaml`; SSL required |
+| Postgres | `DATABASE_URL` | Dev uses in-cluster Postgres StatefulSet with `<project>-<env>-db-credentials` and `<project>-<env>-db-connection`; `sslMode: disable` in dev; production uses RDS with SSL |
 | Pod Identity association (order-service, worker) | SQS access | SA = service name, namespace `order-platform` |
 | Redis Service | api-gateway rate limiting | `redis`, namespace `order-platform` (`kubernetes/platform/redis`) |
 | Traefik + cert-manager `ClusterIssuer` | only when `ingressRoute.enabled` | entrypoint `websecure`, `letsencrypt-staging` / `letsencrypt-prod` |

@@ -4,7 +4,7 @@ output "db_address" {
 }
 
 output "db_port" {
-  description = "Postgres port"
+  description = "RDS port"
   value       = aws_db_instance.this.port
 }
 

@@ -24,6 +24,16 @@ output "db_credentials_secret_name" {
 }
 
 output "db_username" {
-  description = "RDS master username stored in the database credentials secret"
+  description = "postgres master username stored in the database credentials secret"
   value       = var.db_username
+}
+
+output "db_connection_secret_name" {
+  description = "Name of the db connection secret"
+  value       = aws_secretsmanager_secret.db_connection.name
+}
+
+output "db_connection_secret_arn" {
+  description = "arn of the db connection secret"
+  value       = aws_secretsmanager_secret.db_connection.arn
 }

@@ -16,7 +16,7 @@ services:
       - ./infra/monitoring/alerts:/etc/prometheus/alerts:ro
 
   grafana:
-    image: grafana/grafana:12.1.0
+    image: grafana/grafana:13.2.3
     ports:
       - "3000:3000"
     environment:

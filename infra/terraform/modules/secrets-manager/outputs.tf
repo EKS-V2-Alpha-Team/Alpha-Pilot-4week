@@ -30,10 +30,10 @@ output "db_username" {
 
 output "db_connection_secret_name" {
   description = "Name of the db connection secret"
-  value       = aws_secretsmanager_secret.db_connection.name
+  value       = var.environment == "dev" ? aws_secretsmanager_secret.db_connection[0].name : null
 }
 
 output "db_connection_secret_arn" {
-  description = "arn of the db connection secret"
-  value       = aws_secretsmanager_secret.db_connection.arn
+  description = "arn  of the db connection secret"
+  value       = var.environment == "dev" ? aws_secretsmanager_secret.db_connection[0].arn : null
 }

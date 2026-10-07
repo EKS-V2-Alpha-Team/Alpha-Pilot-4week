@@ -10,7 +10,7 @@ groups:
         annotations:
           summary: "{{ $labels.job }} is not exposing metrics"
 
-      # Users are getting errors. Threshold is a placeholder until SLOs are agreed.
+      # Users are experiencing request errors.
       - alert: HighErrorRate
         expr: |
           sum by (job) (rate(http_requests_total{status_code=~"5.."}[5m]))
@@ -22,7 +22,7 @@ groups:
         annotations:
           summary: "{{ $labels.job }} 5xx ratio above 5%"
 
-      # Users are waiting. Threshold is a placeholder until SLOs are agreed.
+      # Users are experiencing slow response times.
       - alert: HighLatencyP95
         expr: |
           histogram_quantile(0.95,
@@ -38,10 +38,10 @@ groups:
       - alert: SchedulerTaskStale
         expr: |
           (time() - scheduler_job_last_completed_timestamp_seconds{task="expire_reservations"}) > 180
-          or (time() - scheduler_job_last_completed_timestamp_seconds{task="abandoned_carts"}) > 900
-          or (time() - scheduler_job_last_completed_timestamp_seconds{task="retry_failed_payments"}) > 2700
-          or (time() - scheduler_job_last_completed_timestamp_seconds{task="cleanup_old_events"}) > 5400
-          or (time() - scheduler_job_last_completed_timestamp_seconds{task="daily_digest"}) > 10800
+            or (time() - scheduler_job_last_completed_timestamp_seconds{task="abandoned_carts"}) > 900
+            or (time() - scheduler_job_last_completed_timestamp_seconds{task="retry_failed_payments"}) > 2700
+            or (time() - scheduler_job_last_completed_timestamp_seconds{task="cleanup_old_events"}) > 5400
+            or (time() - scheduler_job_last_completed_timestamp_seconds{task="daily_digest"}) > 10800
         for: 1m
         labels:
           severity: warning
@@ -67,4 +67,63 @@ groups:
           severity: warning
         annotations:
           summary: "api-gateway cannot reach Redis for rate limiting"
-          
+
+  # kuberenetes report these
+  - name: pod-alerts
+    rules:
+      # A pod keeps crashing and restarting.
+      - alert: PodCrashLooping
+        expr: |
+          max by (pod, container) (kube_pod_container_status_waiting_reason{namespace="order-platform", reason="CrashLoopBackOff"}) == 1
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.pod }} is crash looping"
+
+      # Close to the memory limit (80%). Reaching it gets the pod OOMKilled.
+      - alert: PodMemoryNearLimit
+        expr: |
+          sum by (pod, container) (container_memory_working_set_bytes{namespace="order-platform", container!=""})
+            / sum by (pod, container) (kube_pod_container_resource_limits{namespace="order-platform", resource="memory"})
+          > 0.8
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.pod }} is above 80% of its memory limit"
+
+      # Fewer pods ready than the deployment asks for.
+      - alert: DeploymentReplicasMismatch
+        expr: |
+          kube_deployment_spec_replicas{namespace="order-platform"}
+            != kube_deployment_status_replicas_available{namespace="order-platform"}
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.deployment }} has fewer pods ready than wanted"
+
+  # node health
+  - name: node-alerts
+    rules:
+      # A node is unhealthy, so the pods on it may be unreachable.
+      - alert: NodeNotReady
+        expr: kube_node_status_condition{condition="Ready", status="true"} == 0
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Node {{ $labels.node }} is not ready"
+
+      # A full node disk evicts pods and blocks image pulls.
+      - alert: NodeDiskAlmostFull
+        expr: |
+          node_filesystem_avail_bytes{mountpoint="/", fstype!~"tmpfs|overlay"}
+            / node_filesystem_size_bytes{mountpoint="/", fstype!~"tmpfs|overlay"}
+          < 0.20
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Node {{ $labels.instance }} disk is over 80% full"

@@ -64,7 +64,7 @@ jobs:
 
       - name: Post destroy plan comment
         if: github.event_name == 'pull_request'
-        uses: borchero/terraform-plan-comment@v2
+        uses: borchero/terraform-plan-comment@f585438eda2fa77c6f275994b92aeccd86ef3542 # v3
         with:
           token: ${{ github.token }}
           planfile: destroy.tfplan
@@ -119,7 +119,7 @@ jobs:
           terraform init -input=false
 
       - name: Download destroy plan
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: tfplan-destroy
           path: ${{ env.TF_WORKING_DIR }}

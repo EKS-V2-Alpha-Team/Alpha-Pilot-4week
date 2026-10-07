@@ -31,11 +31,39 @@ The nine [services](services/) run on an Amazon EKS cluster. Terraform provision
 
 ![Architecture diagram](images/architecture.png)
 
+1. **Network**: a VPC across three availability zones in `eu-west-2`. The cluster nodes and the database run in private subnets, and only the load balancer is public.
+2. **Edge**: traffic enters through AWS and is routed into the cluster.
+   - **DNS**: Route 53 resolves the domain, and ExternalDNS keeps the record pointed at the load balancer.
+   - **Load balancing**: an AWS Network Load Balancer passes traffic to Traefik, the ingress controller.
+   - **TLS**: cert-manager issues and renews the certificate from Let's Encrypt.
+3. **Services**: the nine Go services run in the `order-platform` namespace.
+   - **Synchronous**: the API gateway is the single entry point and routes HTTP requests to each service.
+   - **Asynchronous**: orders are processed through an Amazon SQS queue, with failed messages moved to a dead-letter queue.
+   - **Data**: PostgreSQL stores orders, inventory and payments.
+4. **Platform**: shared tools that run alongside the services.
+   - **Delivery**: ArgoCD deploys everything from Git.
+   - **Scaling**: Karpenter adds and removes nodes based on demand.
+   - **Secrets**: External Secrets pulls credentials from AWS Secrets Manager.
+   - **Monitoring**: Prometheus and Grafana collect and display metrics.
+
+The reasoning and trade-offs behind these choices are in [ARCHITECTURE.md](ARCHITECTURE.md).
+
 ---
 
 ## Request Flow
 
 ![Request flow diagram](images/request-flow.png)
+
+1. **Place an order**: the customer sends `POST /api/orders` with their JWT.
+   - **Edge**: the Network Load Balancer passes the request to Traefik, which terminates TLS with the certificate from cert-manager.
+   - **Gateway**: the API gateway checks the JWT, rate limits per user in Redis and forwards the request to order-service.
+   - **Save**: order-service saves the order as `pending` and its `order.created` event in one PostgreSQL transaction, then returns `201 Created` with the order ID.
+2. **Outbox relay**: a background loop in order-service sends saved events to SQS and marks them as sent. If SQS is down, the events wait and are retried, so no order is lost.
+3. **Fulfil the order**: the worker picks up the event from SQS and first checks the order's status, so a repeated message never redoes a finished step.
+   - **Success**: it reserves the stock, charges the payment, confirms the order, commits the stock and deletes the message.
+   - **Out of stock or card declined**: it releases the stock, cancels the order and deletes the message.
+   - **Error or timeout**: the message is not deleted, so SQS retries it and moves it to the dead-letter queue after three attempts.
+4. **Check the order**: the customer calls `GET /api/orders/{id}` through the gateway to see whether the order is pending, confirmed or cancelled.
 
 ---
 

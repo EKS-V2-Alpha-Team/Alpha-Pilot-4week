@@ -57,6 +57,3 @@ groups:
           severity: warning
         annotations:
           summary: "Worker has had repeated event failures in the last 10 minutes"
-
-      # CrashLooping needs Kubernetes (kube-state-metrics). Added with the cluster:
-      # increase(kube_pod_container_status_restarts_total[15m]) > 3

@@ -5,8 +5,7 @@ global:
 rule_files:
   - /etc/prometheus/alerts/*.yaml
 
-# One job per service. Job names match the future Kubernetes Service names,
-# so the same dashboard queries work locally and in the cluster.
+# One job per service.
 # Every service exposes /metrics on container port 9090.
 scrape_configs:
   - job_name: api-gateway

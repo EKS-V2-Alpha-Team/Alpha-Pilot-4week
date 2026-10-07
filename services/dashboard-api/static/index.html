@@ -91,7 +91,7 @@
                 <div class="form-row">
                     <select id="order-product"><option value="">Loading products...</option></select>
                     <input type="number" id="order-qty" placeholder="Qty" value="1" min="1" style="max-width:80px">
-                    <button class="btn btn-primary" onclick="createOrder()">Place Order</button>
+                    <button class="btn btn-primary" id="place-order" onclick="createOrder()">Place Order</button>
                 </div>
             </div>
             <div class="section">
@@ -217,8 +217,16 @@
             refreshAll();
         }
 
+        // Everything that comes back from the API is written into the page with innerHTML,
+        // and some of it (the customer email, product ids, notes) is typed by whoever logged in.
+        // esc() turns it into plain text first, so "<img onerror=...>" shows up as text
+        // instead of running as code in the admin's browser.
+        function esc(v) {
+            return String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        }
+
         function badge(status) {
-            return `<span class="badge badge-${status}">${status}</span>`;
+            return `<span class="badge badge-${esc(status)}">${esc(status)}</span>`;
         }
 
         function ts(s) {
@@ -234,11 +242,11 @@
                 const r = await fetch(API + '/dashboard/summary', { headers: headers() });
                 const d = await r.json();
                 document.getElementById('stats').innerHTML = `
-                    <div class="card"><div class="card-label">Total Orders</div><div class="card-value blue">${d.orders?.total || 0}</div></div>
-                    <div class="card"><div class="card-label">Today's Orders</div><div class="card-value green">${d.orders?.today || 0}</div></div>
+                    <div class="card"><div class="card-label">Total Orders</div><div class="card-value blue">${esc(d.orders?.total || 0)}</div></div>
+                    <div class="card"><div class="card-label">Today's Orders</div><div class="card-value green">${esc(d.orders?.today || 0)}</div></div>
                     <div class="card"><div class="card-label">Revenue</div><div class="card-value green">${money(d.revenue?.total)}</div></div>
-                    <div class="card"><div class="card-label">Low Stock Alerts</div><div class="card-value ${d.inventory?.low_stock > 0 ? 'red' : 'green'}">${d.inventory?.low_stock || 0}</div></div>
-                    <div class="card"><div class="card-label">Active Shipments</div><div class="card-value orange">${d.shipping?.active_shipments || 0}</div></div>
+                    <div class="card"><div class="card-label">Low Stock Alerts</div><div class="card-value ${d.inventory?.low_stock > 0 ? 'red' : 'green'}">${esc(d.inventory?.low_stock || 0)}</div></div>
+                    <div class="card"><div class="card-label">Active Shipments</div><div class="card-value orange">${esc(d.shipping?.active_shipments || 0)}</div></div>
                 `;
             } catch(e) { console.error('Stats error', e); }
         }
@@ -252,34 +260,57 @@
                 if (!orders || !orders.length) { tbody.innerHTML = '<tr><td colspan="7" style="color:#8b949e">No orders yet</td></tr>'; return; }
                 tbody.innerHTML = orders.map(o => {
                     const items = (typeof o.items === 'string' ? JSON.parse(o.items) : o.items) || [];
-                    const itemStr = items.map(i => `${i.product_id} x${i.quantity}`).join(', ');
+                    const itemStr = items.map(i => `${esc(i.product_id)} x${esc(i.quantity)}`).join(', ');
                     let actions = '';
-                    const next = { pending: 'confirmed', confirmed: 'processing', processing: 'shipped', shipped: 'delivered' };
+                    // No pending -> confirmed button: the worker confirms an order itself, after the payment
+                    // has gone through. A manual confirm here would skip the payment.
+                    const next = { confirmed: 'processing', processing: 'shipped', shipped: 'delivered' };
                     if (next[o.status]) {
-                        actions = `<button class="btn btn-sm btn-blue" onclick="advanceOrder(${o.id},'${next[o.status]}')">${next[o.status]}</button>`;
+                        actions = `<button class="btn btn-sm btn-blue" onclick="advanceOrder(${Number(o.id)},'${next[o.status]}')">${next[o.status]}</button>`;
                     }
                     if (['pending','confirmed','processing'].includes(o.status)) {
-                        actions += ` <button class="btn btn-sm btn-orange" onclick="advanceOrder(${o.id},'cancelled')">cancel</button>`;
+                        actions += ` <button class="btn btn-sm btn-orange" onclick="advanceOrder(${Number(o.id)},'cancelled')">cancel</button>`;
                     }
-                    return `<tr><td>${o.id}</td><td>${o.customer_id}</td><td>${itemStr}</td><td>${money(o.total)}</td><td>${badge(o.status)}</td><td>${ts(o.created_at)}</td><td>${actions}</td></tr>`;
+                    return `<tr><td>${esc(o.id)}</td><td>${esc(o.customer_id)}</td><td>${itemStr}</td><td>${money(o.total)}</td><td>${badge(o.status)}</td><td>${ts(o.created_at)}</td><td>${actions}</td></tr>`;
                 }).join('');
             } catch(e) { console.error('Orders error', e); }
         }
 
+        // Every order carries an Idempotency-Key. If the request gets no clear answer (timeout,
+        // dropped connection) and the user clicks again with the same order, the same key is
+        // sent, so the order-service returns the first order instead of making a second.
+        // crypto.randomUUID() needs https, and dev is http, so build the key from getRandomValues.
+        function newKey() {
+            return Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
+        }
+        let lastAttempt = null; // { body, key } of an order that got no clear answer
+        let placingOrder = false;
+
         async function createOrder() {
+            if (placingOrder) return;
             const product = document.getElementById('order-product').value;
             const qty = parseInt(document.getElementById('order-qty').value) || 1;
             if (!product) { toast('Pick a product', true); return; }
 
+            const body = JSON.stringify({ items: [{ product_id: product, quantity: qty }] });
+            const key = lastAttempt && lastAttempt.body === body ? lastAttempt.key : newKey();
+            lastAttempt = { body, key };
+
+            const btn = document.getElementById('place-order');
+            placingOrder = true;
+            btn.disabled = true;
             try {
                 const r = await fetch(API + '/api/orders/', {
-                    method: 'POST', headers: headers(),
-                    body: JSON.stringify({ items: [{ product_id: product, quantity: qty }] })
+                    method: 'POST', headers: { ...headers(), 'Idempotency-Key': key }, body
                 });
                 const d = await r.json();
-                if (r.ok) { toast('Order #' + d.id + ' created'); refreshAll(); }
-                else { toast(d.error || 'Failed', true); }
+                if (r.ok) { lastAttempt = null; toast('Order #' + d.id + ' created'); refreshAll(); }
+                else {
+                    if (r.status < 500) lastAttempt = null; // a clear "no": the next click is a new order
+                    toast(d.error || 'Failed', true);
+                }
             } catch(e) { toast('Error creating order', true); }
+            finally { placingOrder = false; btn.disabled = false; }
         }
 
         async function advanceOrder(id, status) {
@@ -325,7 +356,7 @@
                 tbody.innerHTML = products.map(p => {
                     const avail = p.available ?? (p.stock - p.reserved);
                     const color = avail < 10 ? 'color:#f85149' : '';
-                    return `<tr><td>${p.id}</td><td>${p.name}</td><td>${p.sku}</td><td>${money(p.price)}</td><td>${p.stock}</td><td>${p.reserved}</td><td style="${color}">${avail}</td></tr>`;
+                    return `<tr><td>${esc(p.id)}</td><td>${esc(p.name)}</td><td>${esc(p.sku)}</td><td>${money(p.price)}</td><td>${esc(p.stock)}</td><td>${esc(p.reserved)}</td><td style="${color}">${esc(avail)}</td></tr>`;
                 }).join('');
             } catch(e) { console.error('Inventory error', e); }
         }
@@ -369,7 +400,7 @@
                 const tbody = document.getElementById('ledger-table');
                 if (!entries || !entries.length) { tbody.innerHTML = '<tr><td colspan="6" style="color:#8b949e">No entries</td></tr>'; return; }
                 tbody.innerHTML = entries.map(e => 
-                    `<tr><td style="font-size:0.75rem">${e.payment_id}</td><td>${badge(e.entry_type)}</td><td>${e.debit > 0 ? money(e.debit) : '-'}</td><td>${e.credit > 0 ? money(e.credit) : '-'}</td><td>${e.description}</td><td>${ts(e.created_at)}</td></tr>`
+                    `<tr><td style="font-size:0.75rem">${esc(e.payment_id)}</td><td>${badge(e.entry_type)}</td><td>${e.debit > 0 ? money(e.debit) : '-'}</td><td>${e.credit > 0 ? money(e.credit) : '-'}</td><td>${esc(e.description)}</td><td>${ts(e.created_at)}</td></tr>`
                 ).join('');
             } catch(e) {}
         }
@@ -382,18 +413,18 @@
                 const tbody = document.getElementById('shipping-table');
                 if (!shipments || !shipments.length) { tbody.innerHTML = '<tr><td colspan="6" style="color:#8b949e">No shipments</td></tr>'; return; }
                 tbody.innerHTML = shipments.map(s =>
-                    `<tr><td>${s.id}</td><td>${s.order_id}</td><td>${s.carrier}</td><td>${s.tracking_number || '-'}</td><td>${badge(s.status)}</td><td>${s.recipient_name}</td></tr>`
+                    `<tr><td>${esc(s.id)}</td><td>${esc(s.order_id)}</td><td>${esc(s.carrier)}</td><td>${esc(s.tracking_number || '-')}</td><td>${badge(s.status)}</td><td>${esc(s.recipient_name)}</td></tr>`
                 ).join('');
             } catch(e) {}
 
             try {
                 const r = await fetch(API + '/dashboard/shipping/overview', { headers: headers() });
                 const d = await r.json();
-                const statuses = Object.entries(d.by_status || {}).map(([k,v]) => `${badge(k)} ${v}`).join('&nbsp;&nbsp;');
-                const carriers = Object.entries(d.by_carrier || {}).map(([k,v]) => `${k}: ${v}`).join(', ');
+                const statuses = Object.entries(d.by_status || {}).map(([k,v]) => `${badge(k)} ${esc(v)}`).join('&nbsp;&nbsp;');
+                const carriers = Object.entries(d.by_carrier || {}).map(([k,v]) => `${esc(k)}: ${esc(v)}`).join(', ');
                 document.getElementById('shipping-overview').innerHTML = `
                     <p style="margin-bottom:8px">${statuses || 'No shipments'}</p>
-                    <p style="color:#8b949e;font-size:0.85rem">Carriers: ${carriers || '-'} | Avg delivery: ${(d.avg_delivery_hours || 0).toFixed(1)}h</p>
+                    <p style="color:#8b949e;font-size:0.85rem">Carriers: ${carriers || '-'} | Avg delivery: ${(Number(d.avg_delivery_hours) || 0).toFixed(1)}h</p>
                 `;
             } catch(e) {}
         }
@@ -406,7 +437,7 @@
                 const tbody = document.getElementById('notif-table');
                 if (!notifs || !notifs.length) { tbody.innerHTML = '<tr><td colspan="6" style="color:#8b949e">No notifications</td></tr>'; return; }
                 tbody.innerHTML = notifs.map(n =>
-                    `<tr><td>${n.id}</td><td>${n.recipient}</td><td>${n.channel}</td><td>${n.template}</td><td>${badge(n.status)}</td><td>${ts(n.sent_at || n.created_at)}</td></tr>`
+                    `<tr><td>${esc(n.id)}</td><td>${esc(n.recipient)}</td><td>${esc(n.channel)}</td><td>${esc(n.template)}</td><td>${badge(n.status)}</td><td>${ts(n.sent_at || n.created_at)}</td></tr>`
                 ).join('');
             } catch(e) {}
         }

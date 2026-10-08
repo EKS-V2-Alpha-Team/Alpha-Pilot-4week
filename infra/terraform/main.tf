@@ -23,7 +23,7 @@ module "pod-identity" {
   source = "./modules/pod-identity"
 
   db_credentials_secret_arn = module.secrets_manager.db_credentials_secret_arn
-  db_connection_secret_arn  = module.rds.db_connection_secret_arn
+  db_connection_secret_arn  = var.environment == "dev" ? module.secrets_manager.db_connection_secret_arn : module.rds[0].db_connection_secret_arn
   grafana_secret_arn        = module.secrets_manager.grafana_password_secret_arn
   jwt_secret_arn            = module.secrets_manager.jwt_secret_arn
   project_name              = var.project_name
@@ -54,6 +54,8 @@ module "sqs" {
 module "rds" {
   source = "./modules/rds"
 
+  count = var.environment == "dev" ? 0 : 1 # will create this module only when using staging/prod environment
+
   project_name                  = var.project_name
   environment                   = var.environment
   vpc_id                        = module.vpc.vpc_id
@@ -62,4 +64,14 @@ module "rds" {
   allowed_security_group_id     = module.eks.cluster_security_group_id
   master_username               = module.secrets_manager.db_username
   master_credentials_secret_arn = module.secrets_manager.db_credentials_secret_arn
+}
+
+moved {
+  from = module.rds.aws_secretsmanager_secret.connection
+  to   = module.secrets_manager.aws_secretsmanager_secret.db_connection[0]
+}
+
+moved {
+  from = module.rds.aws_secretsmanager_secret_version.connection
+  to   = module.secrets_manager.aws_secretsmanager_secret_version.db_connection[0]
 }

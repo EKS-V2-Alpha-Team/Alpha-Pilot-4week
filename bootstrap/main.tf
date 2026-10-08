@@ -71,8 +71,9 @@ resource "aws_s3_bucket_lifecycle_configuration" "terraform_state" {
 }
 
 resource "aws_ecr_repository" "main" {
-  name                 = "${var.project_name}-${var.environment}-ecr"
+  name                 = "${var.project_name}-shared-ecr"
   image_tag_mutability = "IMMUTABLE"
+  force_delete         = true
 
   image_scanning_configuration {
     scan_on_push = true
@@ -83,7 +84,7 @@ resource "aws_ecr_repository" "main" {
   }
 
   tags = {
-    Name = "${var.project_name}-ecr"
+    Name = "${var.project_name}-shared-ecr"
   }
 }
 

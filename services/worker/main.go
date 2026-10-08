@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -162,7 +163,7 @@ func handleEvent(client *http.Client, services map[string]string, event Event) e
 //	processing -> shipment created (label)
 //	shipped    -> shipment in transit, "order shipped" email with the tracking number
 //	delivered  -> shipment delivered, "order delivered" email
-//	cancelled  -> stock and money back, shipment cancelled
+//	cancelled  -> stock and money back, shipment cancelled, "order cancelled" email
 func handleStatusChange(client *http.Client, services map[string]string, orderID int, newStatus string) error {
 	switch newStatus {
 	case "cancelled":
@@ -170,7 +171,17 @@ func handleStatusChange(client *http.Client, services map[string]string, orderID
 		if err := undoOrder(client, services, orderID); err != nil {
 			return err
 		}
-		return cancelShipment(client, services, orderID)
+		if err := cancelShipment(client, services, orderID); err != nil {
+			return err
+		}
+		// Last, and not best effort: a failed email returns an error so the message comes
+		// back. Every step above is safe to repeat and the email is sent once per order
+		// (dedupe key), so a retry only finishes what is missing.
+		order, err := getOrder(client, services, orderID)
+		if err != nil {
+			return err
+		}
+		return notifyCustomer(client, services, order, "order_cancelled", "")
 	case "confirmed", "processing", "shipped", "delivered":
 		// handled below
 	default:
@@ -252,7 +263,7 @@ func processNewOrder(client *http.Client, services map[string]string, o newOrder
 		// confirmed or later: the charge already went through. Make sure the stock is
 		// committed; committing twice changes nothing.
 		log.Printf("  -> order %d: already %s, making sure its stock is committed", o.OrderID, status)
-		return commitStock(client, services, o.OrderID)
+		return commitOrHoldAgain(client, services, o)
 	}
 
 	code, err := sendJSON(client, http.MethodPost, services["inventory"]+"/reserve", map[string]interface{}{
@@ -308,7 +319,35 @@ func processNewOrder(client *http.Client, services map[string]string, o newOrder
 
 	// Turn the held stock into a sale (ALPHA-77). Only after the confirm, so stock never
 	// leaves the shelf for an order that isn't confirmed.
-	return commitStock(client, services, o.OrderID)
+	return commitOrHoldAgain(client, services, o)
+}
+
+// commitOrHoldAgain commits the order's stock. If the hold has expired (inventory-service
+// answers 409) the customer has already paid, so it takes the stock again; if there is none
+// left it cancels the order, and the cancel handling refunds the charge. Without this a paid
+// order could finish with the stock never leaving the shelf.
+func commitOrHoldAgain(client *http.Client, services map[string]string, o newOrder) error {
+	err := commitStock(client, services, o.OrderID)
+	if !errors.Is(err, errHoldGone) {
+		return err
+	}
+	log.Printf("  -> order %d: its stock hold expired before the commit, holding it again", o.OrderID)
+	code, rerr := sendJSON(client, http.MethodPost, services["inventory"]+"/reserve", map[string]interface{}{
+		"order_id": o.OrderID,
+		"items":    o.Items,
+	})
+	if rerr != nil {
+		return fmt.Errorf("reserve again: %w", rerr)
+	}
+	switch code {
+	case http.StatusCreated, http.StatusOK:
+		return commitStock(client, services, o.OrderID)
+	case http.StatusConflict, http.StatusNotFound:
+		log.Printf("  -> order %d: paid but the stock is gone, cancelling so it is refunded", o.OrderID)
+		return setOrderStatus(client, services, o.OrderID, "cancelled")
+	default:
+		return fmt.Errorf("reserve again: unexpected status %d", code)
+	}
 }
 
 // undoOrder gives a cancelled order back everything it took: releases stock still held,
@@ -503,11 +542,17 @@ func commitStock(client *http.Client, services map[string]string, orderID int) e
 	if err != nil {
 		return fmt.Errorf("commit stock: %w", err)
 	}
+	if code == http.StatusConflict {
+		return errHoldGone
+	}
 	if code != http.StatusOK {
 		return fmt.Errorf("commit stock: unexpected status %d", code)
 	}
 	return nil
 }
+
+// errHoldGone means inventory-service has no active hold to commit for the order.
+var errHoldGone = errors.New("commit stock: the hold is gone")
 
 func setOrderStatus(client *http.Client, services map[string]string, orderID int, status string) error {
 	code, err := sendJSON(client, http.MethodPut, services["order"]+"/status", map[string]interface{}{

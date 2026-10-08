@@ -237,7 +237,8 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 
 	// Find matching route
 	for prefix, targetURL := range routes {
-		if strings.HasPrefix(r.URL.Path, prefix) {
+		// Match whole path segments: /api/orders and /api/orders/..., not /api/ordersX.
+		if r.URL.Path == prefix || strings.HasPrefix(r.URL.Path, strings.TrimSuffix(prefix, "/")+"/") {
 			// Strip the route prefix for downstream. dashboard-api serves /dashboard/*
 			// under that exact path, so that route keeps it.
 			if prefix != "/dashboard/" {
@@ -245,6 +246,11 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "" {
 					r.URL.Path = "/"
 				}
+			}
+			// Only routes meant for the outside world are forwarded (see allowlist.go).
+			if !isExposed(prefix, r.Method, r.URL.Path) {
+				httpError(w, "not found", http.StatusNotFound)
+				return
 			}
 			forward(w, r, targetURL)
 			return

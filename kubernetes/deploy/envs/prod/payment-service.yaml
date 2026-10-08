@@ -1,0 +1,5 @@
+# payment-service in prod.
+image:
+  tag: payment-service-68fc760e
+
+replicaCount: 1

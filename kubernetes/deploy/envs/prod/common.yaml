@@ -1,0 +1,10 @@
+image:
+  # Shared ECR repository used by all three environments.
+  repository: 751501311900.dkr.ecr.eu-west-2.amazonaws.com/eks-v2-dev-ecr
+
+env:
+  AWS_REGION: eu-west-2
+
+database:
+  credentialsSecret: eks-v2-prod-db-credentials
+  connectionSecret: eks-v2-prod-db-connection

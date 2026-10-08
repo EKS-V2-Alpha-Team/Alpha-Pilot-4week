@@ -1,0 +1,5 @@
+# dashboard-api in prod.
+image:
+  tag: dashboard-api-68fc760e
+
+replicaCount: 1

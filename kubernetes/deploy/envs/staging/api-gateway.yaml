@@ -1,0 +1,22 @@
+# api-gateway in staging.
+image:
+  tag: api-gateway-68fc760e
+
+# Two replicas to test availability and rolling updates.
+replicaCount: 2
+
+env:
+  # Trust forwarded IP headers only from within the VPC.
+  TRUSTED_PROXY_CIDRS: 10.6.0.0/16
+
+externalSecrets:
+  env:
+    - name: JWT_SECRET
+      key: eks-v2-staging-jwt-secret
+
+ingressRoute:
+  enabled: true
+  host: dashboard.staging.eksv2.naimaosmann.com
+  tls:
+    clusterIssuer: letsencrypt-staging
+

@@ -1,10 +1,15 @@
 locals {
-  root_app = yamldecode(file("${path.module}/../../kubernetes/platform/root-app.yaml"))
+  environments = ["dev", "staging", "prod"]
+
+  root_apps = {
+    for env in local.environments :
+    env => yamldecode(file("${path.module}/../../kubernetes/platform/root-app-${env}.yaml"))
+  }
 }
 
 # Same name the eks module gives the cluster in infra/terraform.
 data "aws_eks_cluster" "this" {
-  name = "${var.project_name}-${var.environment}-cluster"
+  name = "${var.project_name}-dev-cluster"
 }
 
 resource "helm_release" "argocd" {
@@ -45,7 +50,7 @@ resource "kubernetes_secret_v1" "repo" {
   data_wo_revision = var.deploy_key_version
 }
 
-# Root app-of-apps, read from kubernetes/platform/root-app.yaml
+# Root app-of-apps for dev, staging and prod.
 resource "helm_release" "root_app" {
   name       = "argocd-root-app"
   repository = "https://argoproj.github.io/argo-helm"
@@ -55,13 +60,14 @@ resource "helm_release" "root_app" {
 
   values = [yamlencode({
     applications = {
-      (local.root_app.metadata.name) = merge(
-        { namespace = local.root_app.metadata.namespace },
-        local.root_app.spec,
+      for env, app in local.root_apps :
+      app.metadata.name => merge(
+        { namespace = app.metadata.namespace },
+        app.spec,
       )
     }
   })]
 
-  # ArgoCD can't sync the root app until it can read the repo.
+  # ArgoCD can't sync the root apps until it can read the repo.
   depends_on = [kubernetes_secret_v1.repo]
 }

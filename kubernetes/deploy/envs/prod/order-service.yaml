@@ -1,0 +1,8 @@
+# order-service in prod.
+image:
+  tag: order-service-68fc760e
+
+replicaCount: 1
+
+env:
+  SQS_QUEUE_URL: https://sqs.eu-west-2.amazonaws.com/751501311900/eks-v2-prod-order-events

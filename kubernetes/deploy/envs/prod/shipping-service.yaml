@@ -1,0 +1,5 @@
+# shipping-service in prod.
+image:
+  tag: shipping-service-68fc760e
+
+replicaCount: 1

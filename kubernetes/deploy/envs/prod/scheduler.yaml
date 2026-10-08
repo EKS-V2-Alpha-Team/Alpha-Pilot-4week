@@ -1,0 +1,5 @@
+# scheduler in prod.
+image:
+  tag: scheduler-68fc760e
+
+replicaCount: 1

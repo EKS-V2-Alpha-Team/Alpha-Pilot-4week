@@ -1,0 +1,10 @@
+# inventory-service in staging.
+image:
+  tag: inventory-service-68fc760e
+
+replicaCount: 1
+
+env:
+  # Enable demo catalogue data for staging testing.
+  SEED_DEMO_PRODUCTS: "true"
+

@@ -1,0 +1,21 @@
+# Dev root Application, installed by argocd-bootstrap.
+# Manages the shared platform components and dev services.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-dev
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: git@github.com:EKS-V2-Alpha-Team/Alpha-Pilot-4week.git
+    targetRevision: main
+    path: kubernetes/platform/apps
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+

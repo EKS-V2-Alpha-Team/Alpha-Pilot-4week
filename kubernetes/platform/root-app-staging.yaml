@@ -1,0 +1,22 @@
+# Staging root Application, installed by argocd-bootstrap.
+# Manages staging services only.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-staging
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: git@github.com:EKS-V2-Alpha-Team/Alpha-Pilot-4week.git
+    targetRevision: main
+    path: kubernetes/platform/envs/staging
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+
+

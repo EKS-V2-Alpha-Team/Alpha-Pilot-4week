@@ -1,0 +1,5 @@
+# notification-service in prod.
+image:
+  tag: notification-service-68fc760e
+
+replicaCount: 1

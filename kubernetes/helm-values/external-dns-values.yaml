@@ -5,7 +5,7 @@ provider:
 policy: upsert-only
 
 registry: txt
-txtOwnerId: eks-v2-dev-cluster
+txtOwnerId: eks-v2-cluster
 
 sources:
   - ingress

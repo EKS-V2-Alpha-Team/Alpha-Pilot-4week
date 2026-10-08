@@ -10,9 +10,6 @@ env:
 database:
   enabled: true
 
-service:
-  enabled: false
-
 resources:
   requests:
     cpu: 50m

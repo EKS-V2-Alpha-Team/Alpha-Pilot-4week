@@ -1,5 +1,5 @@
 # shipping-service in dev.
 image:
-  tag: shipping-service-68fc760e
+  tag: shipping-service-47c3184a
 
 replicaCount: 1

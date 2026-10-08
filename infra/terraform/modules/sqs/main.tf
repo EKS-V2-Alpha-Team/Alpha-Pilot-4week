@@ -38,3 +38,24 @@ resource "aws_sqs_queue_redrive_allow_policy" "order_events_dlq" {
     sourceQueueArns   = [aws_sqs_queue.order_events.arn]
   })
 }
+
+# Fires when any message sits in the DLQ: an order event failed 3 times and its order is
+# stuck until someone looks (runbook: docs/sqs/dlq-runbook.md). AWS recommends
+# ApproximateNumberOfMessagesVisible for DLQs; NumberOfMessagesSent does not count messages
+# moved there by the redrive policy. A quiet queue sends no data points, which counts as
+# fine, not as an alarm.
+resource "aws_cloudwatch_metric_alarm" "order_events_dlq_not_empty" {
+  alarm_name          = "${var.project_name}-${var.environment}-order-events-dlq-not-empty"
+  alarm_description   = "Order events failed 3 times and are waiting in the DLQ. Runbook: docs/sqs/dlq-runbook.md"
+  namespace           = "AWS/SQS"
+  metric_name         = "ApproximateNumberOfMessagesVisible"
+  dimensions          = { QueueName = aws_sqs_queue.order_events_dlq.name }
+  statistic           = "Maximum"
+  period              = 300
+  evaluation_periods  = 1
+  threshold           = 1
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = var.dlq_alarm_actions
+  ok_actions          = var.dlq_alarm_actions
+}

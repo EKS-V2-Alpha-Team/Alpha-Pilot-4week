@@ -109,6 +109,17 @@ func migrate() {
 			created_at TIMESTAMP DEFAULT NOW()
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_ledger_payment ON ledger_entries(payment_id)`,
+		// One row per Idempotency-Key on /charge: what was asked (hash) and what was answered.
+		// status_code and response stay NULL while the first request is still running.
+		`CREATE TABLE IF NOT EXISTS payment_idempotency_keys (
+			key VARCHAR(255) PRIMARY KEY,
+			request_hash CHAR(64) NOT NULL,
+			order_id INTEGER,
+			status_code INTEGER,
+			response JSONB,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_payment_idempotency_keys_created ON payment_idempotency_keys(created_at)`,
 	}
 	for _, m := range migrations {
 		if _, err := db.Exec(m); err != nil {
@@ -162,6 +173,17 @@ func handleCharge(w http.ResponseWriter, r *http.Request) {
 		currency = "GBP"
 	}
 
+	// A key seen before gets the first answer back, decline included.
+	key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if len(key) > maxIdempotencyKeyLen {
+		httpError(w, "Idempotency-Key is too long (255 characters at most)", http.StatusBadRequest)
+		return
+	}
+	fingerprint := chargeFingerprint(req.OrderID, req.CustomerID, req.Amount, currency, req.Method)
+	if key != "" && replayCharge(w, key, fingerprint) {
+		return
+	}
+
 	// Idempotent: an order that is already paid is never charged again.
 	if replyIfAlreadyPaid(w, req.OrderID, req.CustomerID, req.Amount, currency) {
 		return
@@ -175,6 +197,25 @@ func handleCharge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
+
+	// Claim the key in the same transaction as the payment. If another request holds it,
+	// this waits for that one to finish, then answers with its result.
+	if key != "" {
+		claim, err := tx.Exec(
+			`INSERT INTO payment_idempotency_keys (key, request_hash, order_id) VALUES ($1, $2, $3)
+			 ON CONFLICT (key) DO NOTHING`, key, fingerprint, req.OrderID)
+		if err != nil {
+			httpError(w, "failed to process payment", http.StatusInternalServerError)
+			return
+		}
+		if n, _ := claim.RowsAffected(); n == 0 {
+			tx.Rollback()
+			if !replayCharge(w, key, fingerprint) {
+				httpError(w, "a charge with this Idempotency-Key is still in progress; retry shortly", http.StatusConflict)
+			}
+			return
+		}
+	}
 
 	_, err = tx.Exec(
 		`INSERT INTO payments (id, order_id, customer_id, amount, currency, status, method)
@@ -208,6 +249,27 @@ func handleCharge(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 
+	code := http.StatusCreated
+	if status == "failed" {
+		code = http.StatusPaymentRequired
+	}
+	resp, _ := json.Marshal(map[string]interface{}{
+		"payment_id": paymentID,
+		"order_id":   req.OrderID,
+		"amount":     req.Amount,
+		"currency":   currency,
+		"status":     status,
+	})
+	if key != "" {
+		if _, err := tx.Exec(
+			`UPDATE payment_idempotency_keys SET status_code = $2, response = $3 WHERE key = $1`,
+			key, code, string(resp),
+		); err != nil {
+			httpError(w, "failed to process payment", http.StatusInternalServerError)
+			return
+		}
+	}
+
 	if err := tx.Commit(); err != nil {
 		// Before this check the handler answered 201 and published payment.completed
 		// even when nothing was saved.
@@ -225,20 +287,9 @@ func handleCharge(w http.ResponseWriter, r *http.Request) {
 		"status":      status,
 	})
 
-	code := http.StatusCreated
-	if status == "failed" {
-		code = http.StatusPaymentRequired
-	}
-
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"payment_id": paymentID,
-		"order_id":   req.OrderID,
-		"amount":     req.Amount,
-		"currency":   currency,
-		"status":     status,
-	})
+	w.Write(resp)
 }
 
 // processPayment simulates the payment provider (90% success rate).
@@ -522,7 +573,7 @@ func publishEvent(eventType string, payload map[string]interface{}) {
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
 	}
 	data, _ := json.Marshal(event)
-	log.Printf("Event -> SQS: %s", string(data))
+	log.Printf("Event (logged only): %s", string(data))
 }
 
 func httpError(w http.ResponseWriter, msg string, code int) {

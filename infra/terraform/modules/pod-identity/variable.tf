@@ -17,6 +17,7 @@ variable "db_credentials_secret_arn" {
 variable "db_connection_secret_arn" {
   description = "ARN of the database connection (host, port) secret"
   type        = string
+  default     = null
 }
 
 variable "grafana_secret_arn" {

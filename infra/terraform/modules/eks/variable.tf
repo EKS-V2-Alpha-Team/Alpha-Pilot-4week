@@ -15,7 +15,7 @@ variable "private_subnet_ids" {
 }
 
 variable "cluster_admin_principal_arns" {
-  description = "IAM user/role ARNs to grant EKS cluster admin access via access entries"
+  description = "Extra IAM user/role ARNs to grant EKS cluster admin access via access entries (the GitHub Actions role is always added)"
   type        = list(string)
   default     = []
 }

@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -138,10 +140,89 @@ func handleEvent(client *http.Client, services map[string]string, event Event) e
 			return fmt.Errorf("bad order.created payload: %w", err)
 		}
 		return processNewOrder(client, services, order)
+	case "order.status_changed":
+		var change struct {
+			OrderID   int    `json:"order_id"`
+			NewStatus string `json:"new_status"`
+		}
+		if err := json.Unmarshal(event.Payload, &change); err != nil {
+			return fmt.Errorf("bad order.status_changed payload: %w", err)
+		}
+		return handleStatusChange(client, services, change.OrderID, change.NewStatus)
 	default:
 		// No handler yet (ALPHA-78). Deleted so these don't fill the DLQ.
 		log.Printf("  -> no handler for %s yet, skipping", event.Type)
 		return nil
+	}
+}
+
+// What each status change sets off (ALPHA-78). Every step is safe to repeat, so an error
+// here just leaves the message on the queue for another go.
+//
+//	confirmed  -> "order confirmed" email
+//	processing -> shipment created (label)
+//	shipped    -> shipment in transit, "order shipped" email with the tracking number
+//	delivered  -> shipment delivered, "order delivered" email
+//	cancelled  -> stock and money back, shipment cancelled, "order cancelled" email
+func handleStatusChange(client *http.Client, services map[string]string, orderID int, newStatus string) error {
+	switch newStatus {
+	case "cancelled":
+		log.Printf("  -> order %d cancelled, giving back stock and money", orderID)
+		if err := undoOrder(client, services, orderID); err != nil {
+			return err
+		}
+		if err := cancelShipment(client, services, orderID); err != nil {
+			return err
+		}
+		// Last, and not best effort: a failed email returns an error so the message comes
+		// back. Every step above is safe to repeat and the email is sent once per order
+		// (dedupe key), so a retry only finishes what is missing.
+		order, err := getOrder(client, services, orderID)
+		if err != nil {
+			return err
+		}
+		return notifyCustomer(client, services, order, "order_cancelled", "")
+	case "confirmed", "processing", "shipped", "delivered":
+		// handled below
+	default:
+		log.Printf("  -> order %d moved to %q, nothing to do", orderID, newStatus)
+		return nil
+	}
+
+	order, err := getOrder(client, services, orderID)
+	if err != nil {
+		return err
+	}
+	if order.Status == "cancelled" {
+		// A late event for an order that has since been cancelled: no email, no shipment.
+		log.Printf("  -> order %d moved to %q but is now cancelled, skipping", orderID, newStatus)
+		return nil
+	}
+
+	switch newStatus {
+	case "confirmed":
+		return notifyCustomer(client, services, order, "order_confirmed", "")
+	case "processing":
+		return createShipment(client, services, order)
+	case "shipped":
+		// Create first: it does nothing when the shipment exists, and covers an order
+		// that was moved on by hand without passing "processing".
+		if err := createShipment(client, services, order); err != nil {
+			return err
+		}
+		tracking, err := moveShipment(client, services, orderID, "in_transit")
+		if err != nil {
+			return err
+		}
+		return notifyCustomer(client, services, order, "order_shipped", tracking)
+	default: // delivered
+		if err := createShipment(client, services, order); err != nil {
+			return err
+		}
+		if _, err := moveShipment(client, services, orderID, "delivered"); err != nil {
+			return err
+		}
+		return notifyCustomer(client, services, order, "order_delivered", "")
 	}
 }
 
@@ -174,13 +255,15 @@ func processNewOrder(client *http.Client, services map[string]string, o newOrder
 	case "pending":
 		// Normal path below.
 	case "cancelled":
-		log.Printf("  -> order %d: already cancelled, making sure its stock is released", o.OrderID)
-		return releaseStock(client, services, o.OrderID)
+		// Cancelled while this message was in flight (for example by hand after the
+		// charge went through). Finish the undo so no money or stock is left behind.
+		log.Printf("  -> order %d: already cancelled, undoing what was taken", o.OrderID)
+		return undoOrder(client, services, o.OrderID)
 	default:
 		// confirmed or later: the charge already went through. Make sure the stock is
 		// committed; committing twice changes nothing.
 		log.Printf("  -> order %d: already %s, making sure its stock is committed", o.OrderID, status)
-		return commitStock(client, services, o.OrderID)
+		return commitOrHoldAgain(client, services, o)
 	}
 
 	code, err := sendJSON(client, http.MethodPost, services["inventory"]+"/reserve", map[string]interface{}{
@@ -216,7 +299,16 @@ func processNewOrder(client *http.Client, services map[string]string, o newOrder
 		if err := releaseStock(client, services, o.OrderID); err != nil {
 			return err
 		}
-		return setOrderStatus(client, services, o.OrderID, "cancelled")
+		if err := setOrderStatus(client, services, o.OrderID, "cancelled"); err != nil {
+			return err
+		}
+		// Best effort: the order is already cancelled and its stock released, so a
+		// failed email must not send this message round again.
+		declined := orderInfo{ID: o.OrderID, CustomerID: o.CustomerID, Total: o.Total, Currency: o.Currency}
+		if err := notifyCustomer(client, services, declined, "payment_failed", ""); err != nil {
+			log.Printf("  -> order %d: payment_failed email not sent: %v", o.OrderID, err)
+		}
+		return nil
 	default:
 		return fmt.Errorf("charge: unexpected status %d", code)
 	}
@@ -227,26 +319,205 @@ func processNewOrder(client *http.Client, services map[string]string, o newOrder
 
 	// Turn the held stock into a sale (ALPHA-77). Only after the confirm, so stock never
 	// leaves the shelf for an order that isn't confirmed.
-	return commitStock(client, services, o.OrderID)
+	return commitOrHoldAgain(client, services, o)
+}
+
+// commitOrHoldAgain commits the order's stock. If the hold has expired (inventory-service
+// answers 409) the customer has already paid, so it takes the stock again; if there is none
+// left it cancels the order, and the cancel handling refunds the charge. Without this a paid
+// order could finish with the stock never leaving the shelf.
+func commitOrHoldAgain(client *http.Client, services map[string]string, o newOrder) error {
+	err := commitStock(client, services, o.OrderID)
+	if !errors.Is(err, errHoldGone) {
+		return err
+	}
+	log.Printf("  -> order %d: its stock hold expired before the commit, holding it again", o.OrderID)
+	code, rerr := sendJSON(client, http.MethodPost, services["inventory"]+"/reserve", map[string]interface{}{
+		"order_id": o.OrderID,
+		"items":    o.Items,
+	})
+	if rerr != nil {
+		return fmt.Errorf("reserve again: %w", rerr)
+	}
+	switch code {
+	case http.StatusCreated, http.StatusOK:
+		return commitStock(client, services, o.OrderID)
+	case http.StatusConflict, http.StatusNotFound:
+		log.Printf("  -> order %d: paid but the stock is gone, cancelling so it is refunded", o.OrderID)
+		return setOrderStatus(client, services, o.OrderID, "cancelled")
+	default:
+		return fmt.Errorf("reserve again: unexpected status %d", code)
+	}
+}
+
+// undoOrder gives a cancelled order back everything it took: releases stock still held,
+// puts sold stock back on the shelf, and refunds the charge. Each step does nothing when
+// there is nothing to undo and is safe to repeat, so it runs for every cancellation
+// (including the worker's own) and again on a retry.
+func undoOrder(client *http.Client, services map[string]string, orderID int) error {
+	if err := releaseStock(client, services, orderID); err != nil {
+		return err
+	}
+	if err := restockSold(client, services, orderID); err != nil {
+		return err
+	}
+	return refundCharge(client, services, orderID)
+}
+
+// restockSold returns stock that was already sold (committed) for the order. Safe to repeat.
+func restockSold(client *http.Client, services map[string]string, orderID int) error {
+	code, err := sendJSON(client, http.MethodPost, services["inventory"]+"/restock", map[string]interface{}{
+		"order_id": orderID,
+	})
+	if err != nil {
+		return fmt.Errorf("restock: %w", err)
+	}
+	if code != http.StatusOK {
+		return fmt.Errorf("restock: unexpected status %d", code)
+	}
+	return nil
+}
+
+// refundCharge refunds the order's charge. 404 means the order was never charged
+// (out of stock, declined, or cancelled before payment), so there is nothing to refund.
+// Safe to repeat: payment-service answers 200 for a charge it already refunded.
+func refundCharge(client *http.Client, services map[string]string, orderID int) error {
+	code, err := sendJSON(client, http.MethodPost, services["payment"]+"/refund", map[string]interface{}{
+		"order_id": orderID,
+		"reason":   "order cancelled",
+	})
+	if err != nil {
+		return fmt.Errorf("refund: %w", err)
+	}
+	if code != http.StatusOK && code != http.StatusNotFound {
+		return fmt.Errorf("refund: unexpected status %d", code)
+	}
+	return nil
+}
+
+// orderInfo is the part of an order the worker needs for emails and shipments.
+type orderInfo struct {
+	ID         int     `json:"id"`
+	CustomerID string  `json:"customer_id"`
+	Status     string  `json:"status"`
+	Total      float64 `json:"total"`
+	Currency   string  `json:"currency"`
+}
+
+// getOrder asks order-service for the order as it is now.
+func getOrder(client *http.Client, services map[string]string, orderID int) (orderInfo, error) {
+	resp, err := client.Get(fmt.Sprintf("%s/%d", services["order"], orderID))
+	if err != nil {
+		return orderInfo{}, fmt.Errorf("get order: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return orderInfo{}, fmt.Errorf("get order: unexpected status %d", resp.StatusCode)
+	}
+	var order orderInfo
+	if err := json.NewDecoder(resp.Body).Decode(&order); err != nil || order.Status == "" {
+		return orderInfo{}, fmt.Errorf("get order: unreadable response")
+	}
+	order.ID = orderID
+	return order, nil
 }
 
 // getOrderStatus asks order-service for the order's current status.
 func getOrderStatus(client *http.Client, services map[string]string, orderID int) (string, error) {
-	resp, err := client.Get(fmt.Sprintf("%s/%d", services["order"], orderID))
+	order, err := getOrder(client, services, orderID)
+	return order.Status, err
+}
+
+// There is no address model yet (ALPHA-78), so every shipment gets this placeholder.
+// The shipment, its tracking number and its status all work; only the address is empty.
+const placeholderAddress = "PLACEHOLDER - no address collected yet (ALPHA-78)"
+
+// createShipment makes the order's shipment. Safe to repeat: shipping-service keeps one
+// shipment per order and answers 200 with the existing one.
+func createShipment(client *http.Client, services map[string]string, o orderInfo) error {
+	recipient := o.CustomerID
+	if recipient == "" {
+		recipient = "unknown customer"
+	}
+	code, err := sendJSON(client, http.MethodPost, services["shipping"]+"/shipments", map[string]interface{}{
+		"order_id":       o.ID,
+		"recipient_name": recipient,
+		"address_line1":  placeholderAddress,
+		"city":           "TBC",
+		"postcode":       "TBC",
+		"country":        "GB",
+	})
 	if err != nil {
-		return "", fmt.Errorf("get order: %w", err)
+		return fmt.Errorf("create shipment: %w", err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("get order: unexpected status %d", resp.StatusCode)
+	if code != http.StatusCreated && code != http.StatusOK {
+		return fmt.Errorf("create shipment: unexpected status %d", code)
 	}
-	var order struct {
-		Status string `json:"status"`
+	return nil
+}
+
+// moveShipment moves the order's shipment to status ("in_transit" or "delivered") and
+// returns its tracking number. Safe to repeat.
+func moveShipment(client *http.Client, services map[string]string, orderID int, status string) (string, error) {
+	var out struct {
+		TrackingNumber string `json:"tracking_number"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&order); err != nil || order.Status == "" {
-		return "", fmt.Errorf("get order: unreadable response")
+	code, err := doJSON(client, http.MethodPut, fmt.Sprintf("%s/shipments/by-order/%d", services["shipping"], orderID),
+		map[string]interface{}{"status": status}, &out)
+	if err != nil {
+		return "", fmt.Errorf("shipment %s: %w", status, err)
 	}
-	return order.Status, nil
+	if code != http.StatusOK {
+		return "", fmt.Errorf("shipment %s: unexpected status %d", status, code)
+	}
+	return out.TrackingNumber, nil
+}
+
+// cancelShipment cancels the order's shipment. 404 means there never was one (the
+// order was cancelled before it reached processing), so there is nothing to cancel.
+func cancelShipment(client *http.Client, services map[string]string, orderID int) error {
+	code, err := sendJSON(client, http.MethodPut, fmt.Sprintf("%s/shipments/by-order/%d", services["shipping"], orderID),
+		map[string]interface{}{"status": "cancelled"})
+	if err != nil {
+		return fmt.Errorf("cancel shipment: %w", err)
+	}
+	if code != http.StatusOK && code != http.StatusNotFound {
+		return fmt.Errorf("cancel shipment: unexpected status %d", code)
+	}
+	return nil
+}
+
+// notifyCustomer sends the email for template. The dedupe key (template + order) means
+// notification-service sends it once however many times the message comes back.
+func notifyCustomer(client *http.Client, services map[string]string, o orderInfo, template, tracking string) error {
+	if o.CustomerID == "" {
+		log.Printf("  -> order %d has no customer to email, skipping %s", o.ID, template)
+		return nil
+	}
+	name := o.CustomerID
+	if at := strings.Index(name, "@"); at > 0 {
+		name = name[:at]
+	}
+	code, err := sendJSON(client, http.MethodPost, services["notification"]+"/send", map[string]interface{}{
+		"recipient":  o.CustomerID,
+		"channel":    "email",
+		"template":   template,
+		"dedupe_key": fmt.Sprintf("%s:%d", template, o.ID),
+		"data": map[string]interface{}{
+			"OrderID":        o.ID,
+			"CustomerName":   name,
+			"Currency":       o.Currency,
+			"Total":          fmt.Sprintf("%.2f", o.Total),
+			"TrackingNumber": tracking,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("send %s: %w", template, err)
+	}
+	if code != http.StatusCreated && code != http.StatusOK {
+		return fmt.Errorf("send %s: unexpected status %d", template, code)
+	}
+	return nil
 }
 
 // releaseStock releases any stock still held for the order. Safe to repeat.
@@ -271,11 +542,17 @@ func commitStock(client *http.Client, services map[string]string, orderID int) e
 	if err != nil {
 		return fmt.Errorf("commit stock: %w", err)
 	}
+	if code == http.StatusConflict {
+		return errHoldGone
+	}
 	if code != http.StatusOK {
 		return fmt.Errorf("commit stock: unexpected status %d", code)
 	}
 	return nil
 }
+
+// errHoldGone means inventory-service has no active hold to commit for the order.
+var errHoldGone = errors.New("commit stock: the hold is gone")
 
 func setOrderStatus(client *http.Client, services map[string]string, orderID int, status string) error {
 	code, err := sendJSON(client, http.MethodPut, services["order"]+"/status", map[string]interface{}{
@@ -293,6 +570,12 @@ func setOrderStatus(client *http.Client, services map[string]string, orderID int
 
 // sendJSON sends body as JSON and returns the response status code.
 func sendJSON(client *http.Client, method, url string, body interface{}) (int, error) {
+	return doJSON(client, method, url, body, nil)
+}
+
+// doJSON is sendJSON that also decodes a JSON response into out (when out is not nil
+// and the response is 200). A response that can't be decoded leaves out empty.
+func doJSON(client *http.Client, method, url string, body interface{}, out interface{}) (int, error) {
 	b, err := json.Marshal(body)
 	if err != nil {
 		return 0, err
@@ -307,6 +590,9 @@ func sendJSON(client *http.Client, method, url string, body interface{}) (int, e
 		return 0, err
 	}
 	defer resp.Body.Close()
+	if out != nil && resp.StatusCode == http.StatusOK {
+		json.NewDecoder(resp.Body).Decode(out)
+	}
 	io.Copy(io.Discard, resp.Body)
 	return resp.StatusCode, nil
 }

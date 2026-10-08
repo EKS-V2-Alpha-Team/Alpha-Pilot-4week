@@ -188,3 +188,143 @@ func TestChargeWithRefundMethodIsRejected(t *testing.T) {
 		t.Fatalf("method refund: got %d, want 400", rec.Code)
 	}
 }
+
+func refundByOrder(t *testing.T, orderID int) (int, map[string]interface{}) {
+	t.Helper()
+	body, _ := json.Marshal(map[string]interface{}{"order_id": orderID, "reason": "order cancelled"})
+	rec := httptest.NewRecorder()
+	handleRefund(rec, httptest.NewRequest(http.MethodPost, "/refund", bytes.NewReader(body)))
+	var resp map[string]interface{}
+	json.NewDecoder(rec.Body).Decode(&resp)
+	return rec.Code, resp
+}
+
+func refundRows(t *testing.T, orderID int) int {
+	t.Helper()
+	var n int
+	if err := db.QueryRow(`SELECT count(*) FROM payments WHERE order_id = $1 AND method = 'refund'`, orderID).Scan(&n); err != nil {
+		t.Fatalf("count refunds: %v", err)
+	}
+	return n
+}
+
+func TestRefundByOrderRefundsTheCharge(t *testing.T) {
+	setupTestDB(t)
+	charge(t, 42, 100)
+
+	code, resp := refundByOrder(t, 42)
+	if code != http.StatusOK || resp["status"] != "completed" {
+		t.Fatalf("refund: got %d %v, want 200 completed", code, resp)
+	}
+	if got := refundRows(t, 42); got != 1 {
+		t.Errorf("refund rows = %d, want 1", got)
+	}
+	if got := countPayments(t, 42, "refunded"); got != 1 {
+		t.Errorf("charge status refunded count = %d, want 1", got)
+	}
+}
+
+// A redelivered cancel event refunds again. The money goes back once.
+func TestRefundByOrderTwiceRefundsOnce(t *testing.T) {
+	setupTestDB(t)
+	charge(t, 42, 100)
+	refundByOrder(t, 42)
+
+	code, resp := refundByOrder(t, 42)
+	if code != http.StatusOK || resp["status"] != "already_refunded" {
+		t.Errorf("repeat refund: got %d %v, want 200 already_refunded", code, resp)
+	}
+	if got := refundRows(t, 42); got != 1 {
+		t.Errorf("refund rows = %d, want 1", got)
+	}
+}
+
+func TestConcurrentRefundsRefundOnce(t *testing.T) {
+	setupTestDB(t)
+	charge(t, 42, 100)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			refundByOrder(t, 42)
+		}()
+	}
+	wg.Wait()
+	if got := refundRows(t, 42); got != 1 {
+		t.Errorf("refund rows = %d, want 1 (concurrent refunds must not each pay out)", got)
+	}
+}
+
+// An order that was never charged (out of stock, declined) has nothing to refund.
+func TestRefundOfUnchargedOrderIsNotFound(t *testing.T) {
+	setupTestDB(t)
+	if code, _ := refundByOrder(t, 99); code != http.StatusNotFound {
+		t.Errorf("got %d, want 404", code)
+	}
+}
+
+func TestRefundNeedsAPaymentOrOrder(t *testing.T) {
+	setupTestDB(t)
+	rec := httptest.NewRecorder()
+	handleRefund(rec, httptest.NewRequest(http.MethodPost, "/refund", bytes.NewReader([]byte(`{}`))))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("got %d, want 400", rec.Code)
+	}
+}
+
+// Item 20: the refund mirrors the charge, so debits and credits across the order match.
+func TestLedgerBalancesAfterRefund(t *testing.T) {
+	setupTestDB(t)
+	charge(t, 42, 100)
+	refundByOrder(t, 42)
+
+	var debit, credit float64
+	if err := db.QueryRow(`SELECT COALESCE(SUM(debit),0), COALESCE(SUM(credit),0) FROM ledger_entries`).Scan(&debit, &credit); err != nil {
+		t.Fatalf("sum ledger: %v", err)
+	}
+	if debit != credit {
+		t.Errorf("ledger out of balance: debit %.2f, credit %.2f", debit, credit)
+	}
+	var entries int
+	db.QueryRow(`SELECT count(*) FROM ledger_entries`).Scan(&entries)
+	if entries != 4 {
+		t.Errorf("ledger entries = %d, want 4 (charge, revenue, refund, revenue_reversal)", entries)
+	}
+}
+
+// By payment id the old rule holds: a second refund of the same payment is a 409.
+func TestRefundByPaymentIDTwiceIsConflict(t *testing.T) {
+	setupTestDB(t)
+	_, paid := charge(t, 42, 100)
+	body, _ := json.Marshal(map[string]interface{}{"payment_id": paid.PaymentID})
+	do := func() int {
+		rec := httptest.NewRecorder()
+		handleRefund(rec, httptest.NewRequest(http.MethodPost, "/refund", bytes.NewReader(body)))
+		return rec.Code
+	}
+	if first := do(); first != http.StatusOK {
+		t.Fatalf("first refund: got %d, want 200", first)
+	}
+	if second := do(); second != http.StatusConflict {
+		t.Errorf("second refund: got %d, want 409", second)
+	}
+	if got := refundRows(t, 42); got != 1 {
+		t.Errorf("refund rows = %d, want 1", got)
+	}
+}
+
+// A refund row is a payment too, but it can't be refunded itself.
+func TestRefundCannotBeRefunded(t *testing.T) {
+	setupTestDB(t)
+	charge(t, 42, 100)
+	_, resp := refundByOrder(t, 42)
+	refundID, _ := resp["refund_id"].(string)
+	body, _ := json.Marshal(map[string]interface{}{"payment_id": refundID})
+	rec := httptest.NewRecorder()
+	handleRefund(rec, httptest.NewRequest(http.MethodPost, "/refund", bytes.NewReader(body)))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("refund of a refund: got %d, want 404", rec.Code)
+	}
+}

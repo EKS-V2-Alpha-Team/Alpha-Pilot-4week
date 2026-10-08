@@ -4,7 +4,7 @@ package main
 //
 //	TEST_DATABASE_URL=postgres://app:localdev@localhost:5432/orders_test?sslmode=disable go test ./...
 //
-// WARNING: every test TRUNCATES orders, order_events and order_outbox in that database.
+// WARNING: every test TRUNCATES orders, order_events, order_outbox and idempotency_keys in that database.
 // Never point TEST_DATABASE_URL at a database whose data you want to keep.
 // Without TEST_DATABASE_URL the tests are skipped, so pipelines without Postgres stay green.
 
@@ -14,10 +14,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -54,6 +56,8 @@ func setupTestDB(t *testing.T) {
 		t.Fatalf("ping db: %v", err)
 	}
 	migrate()
+	// Orders are priced by inventory, so these tests use a stand-in that knows "p1".
+	useFakeInventory(t, map[string]catalogueEntry{"p1": {Price: 50, Available: 1000}})
 	if _, err := db.Exec(`TRUNCATE order_outbox, order_events, orders RESTART IDENTITY CASCADE`); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
@@ -68,11 +72,32 @@ func count(t *testing.T, query string, args ...interface{}) int {
 	return n
 }
 
+const defaultOrderBody = `{"items":[{"product_id":"p1","quantity":2,"price":50}]}`
+
+var keyCounter int64
+
+// postOrder places the default order with a fresh Idempotency-Key, so every call is a new order.
 func postOrder(t *testing.T) *httptest.ResponseRecorder {
 	t.Helper()
-	body := `{"items":[{"product_id":"p1","quantity":2,"price":50}]}`
+	return postOrderWithKey(t, fmt.Sprintf("test-key-%d", atomic.AddInt64(&keyCounter, 1)), defaultOrderBody)
+}
+
+// postOrderWithKey sends POST / as alice with the given key (an empty key sends no header).
+func postOrderWithKey(t *testing.T, key, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	return serve(newOrderRequest("alice@test.com", key, body))
+}
+
+func newOrderRequest(customer, key, body string) *http.Request {
 	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(body))
-	req.Header.Set("X-User-Email", "alice@test.com")
+	req.Header.Set("X-User-Email", customer)
+	if key != "" {
+		req.Header.Set("Idempotency-Key", key)
+	}
+	return req
+}
+
+func serve(req *http.Request) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
 	handleOrders(rec, req)
 	return rec

@@ -59,6 +59,9 @@ func main() {
 	db.SetConnMaxLifetime(5 * time.Minute)
 	waitForDB()
 	migrate()
+	if getEnv("SEED_DEMO_PRODUCTS", "") == "true" {
+		seedDemoProducts()
+	}
 	startMetricsServer(db, getEnv("METRICS_PORT", "9090"))
 
 	mux := http.NewServeMux()
@@ -69,6 +72,7 @@ func main() {
 	mux.HandleFunc("/reserve", handleReserve)
 	mux.HandleFunc("/release", handleRelease)
 	mux.HandleFunc("/commit", handleCommit)
+	mux.HandleFunc("/restock", handleRestock)
 	mux.HandleFunc("/low-stock", handleLowStock)
 
 	port := getEnv("PORT", "8082")
@@ -136,6 +140,34 @@ func migrate() {
 	log.Println("Inventory service migrations complete")
 }
 
+// seedDemoProducts adds a small demo catalogue when SEED_DEMO_PRODUCTS=true (dev and
+// local compose only; the variable is not set anywhere else). A fresh database has no
+// products, and orders for unknown products are refused. Existing products, and any
+// stock changes made since, are left alone, so it is safe on every start and with
+// several replicas starting together.
+func seedDemoProducts() {
+	demo := []struct {
+		id, name, sku string
+		price         float64
+		stock         int
+	}{
+		{"kb-001", "Mechanical Keyboard", "SKU-KB-001", 79.99, 100},
+		{"ms-001", "Wireless Mouse", "SKU-MS-001", 29.99, 100},
+		{"mon-001", "27 inch Monitor", "SKU-MON-001", 199.00, 50},
+		{"hub-001", "USB-C Hub", "SKU-HUB-001", 39.50, 200},
+	}
+	for _, p := range demo {
+		if _, err := db.Exec(
+			`INSERT INTO products (id, name, sku, price, stock) VALUES ($1, $2, $3, $4, $5)
+			 ON CONFLICT DO NOTHING`,
+			p.id, p.name, p.sku, p.price, p.stock,
+		); err != nil {
+			log.Fatalf("Seeding demo product %s failed: %v", p.id, err)
+		}
+	}
+	log.Println("Demo products ensured")
+}
+
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	status := "ok"
 	if err := db.Ping(); err != nil {
@@ -182,12 +214,19 @@ func handleProducts(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		if msg := validateNewProduct(p.ID, p.Name, p.SKU, p.Price, p.Stock); msg != "" {
+			httpError(w, msg, http.StatusBadRequest)
+			return
+		}
+
 		_, err := db.Exec(
 			"INSERT INTO products (id, name, sku, price, stock) VALUES ($1, $2, $3, $4, $5)",
 			p.ID, p.Name, p.SKU, p.Price, p.Stock,
 		)
 		if err != nil {
-			httpError(w, "failed to create product: "+err.Error(), http.StatusConflict)
+			// The database error names tables and constraints, so it stays in the log.
+			log.Printf("Create product %q failed: %v", p.ID, err)
+			httpError(w, "product could not be created (the id or sku may already exist)", http.StatusConflict)
 			return
 		}
 
@@ -198,6 +237,25 @@ func handleProducts(w http.ResponseWriter, r *http.Request) {
 	default:
 		httpError(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// validateNewProduct returns a message for the first problem with a new product, or "".
+// Limits match the columns: id VARCHAR(50), name VARCHAR(255), sku VARCHAR(100),
+// price DECIMAL(10,2).
+func validateNewProduct(id, name, sku string, price float64, stock int) string {
+	switch {
+	case strings.TrimSpace(id) == "" || len(id) > 50:
+		return "id is required (max 50 characters)"
+	case strings.TrimSpace(name) == "" || len(name) > 255:
+		return "name is required (max 255 characters)"
+	case strings.TrimSpace(sku) == "" || len(sku) > 100:
+		return "sku is required (max 100 characters)"
+	case price <= 0 || price >= 100000000:
+		return "price must be greater than 0"
+	case stock < 0:
+		return "stock cannot be negative"
+	}
+	return ""
 }
 
 func handleProduct(w http.ResponseWriter, r *http.Request) {
@@ -221,6 +279,9 @@ func handleProduct(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(p)
 }
+
+// reservationMinutes is how long an order's stock is held while it waits to be paid.
+const reservationMinutes = 15
 
 func handleReserve(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -257,7 +318,11 @@ func handleReserve(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
-	expiresAt := time.Now().Add(15 * time.Minute)
+	// When the hold ends is worked out by the database clock, the same one the scheduler
+	// compares it with (expires_at < NOW()). A Go time here would be written as this
+	// process's wall-clock reading, so a process in another time zone than the database
+	// would make holds expire at once, or hours late.
+	var expiresAt time.Time
 
 	for _, item := range req.Items {
 		// Check available stock with row lock
@@ -285,10 +350,12 @@ func handleReserve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if _, err := tx.Exec(
-			"INSERT INTO reservations (order_id, product_id, quantity, status, expires_at) VALUES ($1, $2, $3, 'active', $4)",
-			req.OrderID, item.ProductID, item.Quantity, expiresAt,
-		); err != nil {
+		var itemExpiry time.Time
+		if err := tx.QueryRow(
+			`INSERT INTO reservations (order_id, product_id, quantity, status, expires_at)
+			 VALUES ($1, $2, $3, 'active', NOW() + make_interval(mins => $4)) RETURNING expires_at`,
+			req.OrderID, item.ProductID, item.Quantity, reservationMinutes,
+		).Scan(&itemExpiry); err != nil {
 			if isUniqueViolation(err) {
 				// A concurrent request for the same order reserved first. Undo ours
 				// (including the reserved increment) and report theirs.
@@ -300,6 +367,9 @@ func handleReserve(w http.ResponseWriter, r *http.Request) {
 			}
 			httpError(w, "reservation insert failed", http.StatusInternalServerError)
 			return
+		}
+		if expiresAt.IsZero() {
+			expiresAt = itemExpiry
 		}
 	}
 
@@ -414,7 +484,8 @@ func handleRelease(w http.ResponseWriter, r *http.Request) {
 
 // handleCommit turns an order's held stock into a sale: stock and reserved both drop by
 // the quantity and the reservation becomes 'committed', which the scheduler never
-// expires. Same claim-then-act pattern as release, so a repeat commits nothing.
+// expires. Same claim-then-act pattern as release, so a repeat commits nothing. An order
+// with no active hold and nothing committed answers 409.
 func handleCommit(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		httpError(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -464,6 +535,24 @@ func handleCommit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(items) == 0 {
+		// Nothing active was claimed. A repeat of a commit that already happened is fine (200,
+		// committed 0). But an order whose hold expired, was released or never existed has
+		// not been sold anything: say so (409) instead of reporting a sale that never took
+		// the stock off the shelf. The worker then re-reserves, or cancels and refunds.
+		var committed int
+		if err := tx.QueryRow(
+			"SELECT COUNT(*) FROM reservations WHERE order_id = $1 AND status = 'committed'", req.OrderID,
+		).Scan(&committed); err != nil {
+			httpError(w, "commit failed", http.StatusInternalServerError)
+			return
+		}
+		if committed == 0 {
+			httpError(w, "no active reservation to commit (the hold expired, was released, or was never made)", http.StatusConflict)
+			return
+		}
+	}
+
 	for _, it := range items {
 		if _, err := tx.Exec(
 			"UPDATE products SET stock = stock - $1, reserved = reserved - $1, updated_at = NOW() WHERE id = $2",
@@ -483,6 +572,80 @@ func handleCommit(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"order_id":  req.OrderID,
 		"committed": len(items),
+	})
+}
+
+// handleRestock puts a cancelled order's sold stock back on the shelf: the reservation
+// goes from 'committed' to 'returned' and stock goes up by the quantity. Same
+// claim-then-act pattern as commit, so a repeat returns nothing twice.
+func handleRestock(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpError(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		OrderID int `json:"order_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		httpError(w, "transaction failed", http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.Query(
+		"UPDATE reservations SET status = 'returned' WHERE order_id = $1 AND status = 'committed' RETURNING product_id, quantity",
+		req.OrderID,
+	)
+	if err != nil {
+		httpError(w, "restock failed", http.StatusInternalServerError)
+		return
+	}
+	type item struct {
+		productID string
+		quantity  int
+	}
+	var items []item
+	for rows.Next() {
+		var it item
+		if err := rows.Scan(&it.productID, &it.quantity); err != nil {
+			rows.Close()
+			httpError(w, "scan failed", http.StatusInternalServerError)
+			return
+		}
+		items = append(items, it)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		httpError(w, "iteration failed", http.StatusInternalServerError)
+		return
+	}
+
+	for _, it := range items {
+		if _, err := tx.Exec(
+			"UPDATE products SET stock = stock + $1, updated_at = NOW() WHERE id = $2",
+			it.quantity, it.productID,
+		); err != nil {
+			httpError(w, "restock update failed", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		httpError(w, "restock failed", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"order_id":  req.OrderID,
+		"restocked": len(items),
 	})
 }
 

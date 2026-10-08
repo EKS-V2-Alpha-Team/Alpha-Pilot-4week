@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
+	"text/template"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -87,6 +89,9 @@ func migrate() {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_notifications_recipient ON notifications(recipient)`,
 		`CREATE INDEX IF NOT EXISTS idx_notifications_status ON notifications(status)`,
+		// A caller that can be retried (the worker) sends a dedupe_key; the same key is only ever sent once.
+		`ALTER TABLE notifications ADD COLUMN IF NOT EXISTS dedupe_key VARCHAR(200)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_dedupe ON notifications(dedupe_key) WHERE dedupe_key IS NOT NULL`,
 		`CREATE TABLE IF NOT EXISTS notification_templates (
 			id VARCHAR(100) PRIMARY KEY,
 			channel VARCHAR(20) NOT NULL,
@@ -109,6 +114,7 @@ func migrate() {
 		{"order_confirmed", "email", "Order Confirmed - #{{.OrderID}}", "Hi {{.CustomerName}}, your order #{{.OrderID}} has been confirmed. Total: {{.Currency}} {{.Total}}"},
 		{"order_shipped", "email", "Your Order Has Shipped - #{{.OrderID}}", "Good news! Your order #{{.OrderID}} has been shipped. Tracking: {{.TrackingNumber}}"},
 		{"order_delivered", "email", "Order Delivered - #{{.OrderID}}", "Your order #{{.OrderID}} has been delivered. Thank you for your purchase!"},
+		{"order_cancelled", "email", "Order Cancelled - #{{.OrderID}}", "Hi {{.CustomerName}}, your order #{{.OrderID}} has been cancelled. If you were charged, {{.Currency}} {{.Total}} is being refunded to your card."},
 		{"payment_failed", "email", "Payment Failed - Order #{{.OrderID}}", "We were unable to process your payment for order #{{.OrderID}}. Please update your payment method."},
 		{"low_stock_alert", "email", "Low Stock Alert - {{.ProductName}}", "Product {{.ProductName}} ({{.SKU}}) is running low. Available: {{.Available}}"},
 		{"order_confirmed_sms", "sms", "", "Order #{{.OrderID}} confirmed. Total: {{.Currency}} {{.Total}}"},
@@ -136,6 +142,21 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": status, "service": "notification-service"})
 }
 
+// renderTemplate fills {{.Name}} placeholders from data. A template that does not
+// parse or run is returned as written, so a bad template never stops a notification.
+func renderTemplate(text string, data map[string]interface{}) string {
+	t, err := template.New("n").Parse(text)
+	if err != nil {
+		return text
+	}
+	var out strings.Builder
+	if err := t.Execute(&out, data); err != nil {
+		return text
+	}
+	// A value the caller did not send prints as "<no value>"; show nothing instead.
+	return strings.ReplaceAll(out.String(), "<no value>", "")
+}
+
 func handleSend(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		httpError(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -147,6 +168,7 @@ func handleSend(w http.ResponseWriter, r *http.Request) {
 		Channel   string                 `json:"channel"`
 		Template  string                 `json:"template"`
 		Data      map[string]interface{} `json:"data"`
+		DedupeKey string                 `json:"dedupe_key"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpError(w, "invalid request body", http.StatusBadRequest)
@@ -164,14 +186,23 @@ func handleSend(w http.ResponseWriter, r *http.Request) {
 
 	// Look up template
 	var subject, body string
+	var tmplSubject sql.NullString
 	err := db.QueryRow(
 		"SELECT subject, body FROM notification_templates WHERE id = $1",
 		req.Template,
-	).Scan(&subject, &body)
-	if err != nil {
+	).Scan(&tmplSubject, &body)
+	switch {
+	case err == sql.ErrNoRows:
 		// Use template name as-is if not found
 		subject = req.Template
 		body = req.Template
+	case err != nil:
+		log.Printf("Template lookup for %q failed: %v", req.Template, err)
+		httpError(w, "could not look up template", http.StatusInternalServerError)
+		return
+	default:
+		subject = renderTemplate(tmplSubject.String, req.Data)
+		body = renderTemplate(body, req.Data)
 	}
 
 	metadata, _ := json.Marshal(req.Data)
@@ -181,12 +212,32 @@ func handleSend(w http.ResponseWriter, r *http.Request) {
 	status := "sent"
 	sentAt := time.Now()
 
+	var dedupeKey interface{}
+	if req.DedupeKey != "" {
+		dedupeKey = req.DedupeKey
+	}
+
+	// With a dedupe_key, the unique index lets one request insert and makes a repeat
+	// (a retried SQS message) insert nothing, even when two arrive at once.
 	var notifID int
-	db.QueryRow(
-		`INSERT INTO notifications (recipient, channel, template, subject, body, metadata, status, sent_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
-		req.Recipient, req.Channel, req.Template, subject, body, metadata, status, sentAt,
+	err = db.QueryRow(
+		`INSERT INTO notifications (recipient, channel, template, subject, body, metadata, status, sent_at, dedupe_key)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		 ON CONFLICT (dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING
+		 RETURNING id`,
+		req.Recipient, req.Channel, req.Template, subject, body, metadata, status, sentAt, dedupeKey,
 	).Scan(&notifID)
+	if err == sql.ErrNoRows {
+		log.Printf("Notification already sent: %s (%s)", req.Template, req.DedupeKey)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"status": "already_sent"})
+		return
+	}
+	if err != nil {
+		log.Printf("Saving notification failed: %v", err)
+		httpError(w, "failed to save notification", http.StatusInternalServerError)
+		return
+	}
 
 	log.Printf("Notification sent: [%s] %s -> %s (template: %s)", req.Channel, req.Template, req.Recipient, req.Template)
 

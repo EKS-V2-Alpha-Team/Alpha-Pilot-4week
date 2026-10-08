@@ -33,7 +33,7 @@ services:
       - "6379:6379"
 
   floci:
-    image: floci/floci:2.1.0-compat
+    image: floci/floci:2.2.0-compat
     ports:
       - "4566:4566"
     environment:
@@ -80,6 +80,7 @@ services:
     environment:
       <<: *database-env
       PGAPPNAME: inventory-service
+      SEED_DEMO_PRODUCTS: "true"   # local demo catalogue; see seedDemoProducts
     depends_on:
       - postgres
 

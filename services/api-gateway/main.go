@@ -38,7 +38,12 @@ var (
 )
 
 func main() {
-	jwtSecret = []byte(getEnv("JWT_SECRET", "change-me-in-production"))
+	// No fallback: a built-in default would let anyone who reads the source forge a token.
+	secret := os.Getenv("JWT_SECRET")
+	if secret == "" {
+		log.Fatal("JWT_SECRET is required")
+	}
+	jwtSecret = []byte(secret)
 
 	var err error
 	rlConfig, err = loadRateLimitConfig()
@@ -232,7 +237,8 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 
 	// Find matching route
 	for prefix, targetURL := range routes {
-		if strings.HasPrefix(r.URL.Path, prefix) {
+		// Match whole path segments: /api/orders and /api/orders/..., not /api/ordersX.
+		if r.URL.Path == prefix || strings.HasPrefix(r.URL.Path, strings.TrimSuffix(prefix, "/")+"/") {
 			// Strip the route prefix for downstream. dashboard-api serves /dashboard/*
 			// under that exact path, so that route keeps it.
 			if prefix != "/dashboard/" {
@@ -240,6 +246,11 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "" {
 					r.URL.Path = "/"
 				}
+			}
+			// Only routes meant for the outside world are forwarded (see allowlist.go).
+			if !isExposed(prefix, r.Method, r.URL.Path) {
+				httpError(w, "not found", http.StatusNotFound)
+				return
 			}
 			forward(w, r, targetURL)
 			return

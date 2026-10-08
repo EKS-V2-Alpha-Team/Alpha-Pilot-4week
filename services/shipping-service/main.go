@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -97,6 +98,8 @@ func migrate() {
 			updated_at TIMESTAMP DEFAULT NOW()
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_shipments_order ON shipments(order_id)`,
+		// One shipment per order. This is what makes creating a shipment safe to repeat.
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_shipments_order_unique ON shipments(order_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_shipments_tracking ON shipments(tracking_number)`,
 		`CREATE TABLE IF NOT EXISTS tracking_events (
 			id SERIAL PRIMARY KEY,
@@ -214,27 +217,76 @@ func createShipment(w http.ResponseWriter, r *http.Request) {
 	trackingNumber := generateTrackingNumber(carrier)
 	estimatedDelivery := time.Now().AddDate(0, 0, 3+rand.Intn(5))
 
+	// Shipment and first tracking event go in together or not at all.
+	tx, err := db.Begin()
+	if err != nil {
+		log.Printf("create shipment: begin: %v", err)
+		httpError(w, "failed to create shipment", http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback()
+
+	// One shipment per order. A second request for the same order (a retried SQS
+	// message) inserts nothing and gets the existing shipment back.
 	var shipmentID int
-	err := db.QueryRow(
+	err = tx.QueryRow(
 		`INSERT INTO shipments (order_id, carrier, tracking_number, recipient_name,
 		 address_line1, address_line2, city, postcode, country, weight_kg, estimated_delivery)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		 ON CONFLICT (order_id) DO NOTHING RETURNING id`,
 		req.OrderID, carrier, trackingNumber, req.RecipientName,
 		req.AddressLine1, req.AddressLine2, req.City, req.Postcode, country,
 		req.WeightKg, estimatedDelivery,
 	).Scan(&shipmentID)
 
+	if err == sql.ErrNoRows {
+		tx.Rollback()
+		var existingTracking sql.NullString
+		var existingCarrier string
+		var existingEstimate sql.NullTime
+		err = db.QueryRow(
+			`SELECT id, tracking_number, carrier, estimated_delivery FROM shipments WHERE order_id = $1`,
+			req.OrderID,
+		).Scan(&shipmentID, &existingTracking, &existingCarrier, &existingEstimate)
+		if err != nil {
+			log.Printf("create shipment: read existing for order %d: %v", req.OrderID, err)
+			httpError(w, "failed to create shipment", http.StatusInternalServerError)
+			return
+		}
+		resp := map[string]interface{}{
+			"shipment_id":     shipmentID,
+			"tracking_number": existingTracking.String,
+			"carrier":         existingCarrier,
+			"already_created": true,
+		}
+		if existingEstimate.Valid {
+			resp["estimated_delivery"] = existingEstimate.Time.Format("2006-01-02")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+		return
+	}
 	if err != nil {
+		log.Printf("create shipment: insert: %v", err)
 		httpError(w, "failed to create shipment", http.StatusInternalServerError)
 		return
 	}
 
 	// Initial tracking event
-	db.Exec(
+	if _, err := tx.Exec(
 		`INSERT INTO tracking_events (shipment_id, status, location, description, occurred_at)
 		 VALUES ($1, 'label_created', $2, 'Shipping label created', NOW())`,
 		shipmentID, req.City,
-	)
+	); err != nil {
+		log.Printf("create shipment: tracking event: %v", err)
+		httpError(w, "failed to create shipment", http.StatusInternalServerError)
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		log.Printf("create shipment: commit: %v", err)
+		httpError(w, "failed to create shipment", http.StatusInternalServerError)
+		return
+	}
 
 	publishEvent("shipment.created", map[string]interface{}{
 		"shipment_id":     shipmentID,
@@ -253,7 +305,140 @@ func createShipment(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// shipmentRank orders the steps of a shipment's life. A shipment only moves forward.
+var shipmentRank = map[string]int{"label_created": 0, "in_transit": 1, "delivered": 2}
+
+var shipmentSteps = map[string]string{
+	"in_transit": "Handed to the carrier",
+	"delivered":  "Delivered",
+	"cancelled":  "Shipment cancelled because the order was cancelled",
+}
+
+// handleShipmentByOrder moves an order's shipment to in_transit, delivered or cancelled.
+// The worker calls it when the order's status changes (ALPHA-78). It is safe to repeat:
+// asking for a step the shipment is already at or past changes nothing and still
+// answers 200, so a retried or out-of-order event never fails.
+func handleShipmentByOrder(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		httpError(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	orderID, err := strconv.Atoi(strings.TrimPrefix(r.URL.Path, "/shipments/by-order/"))
+	if err != nil || orderID < 1 {
+		httpError(w, "order id must be a number", http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if _, ok := shipmentSteps[req.Status]; !ok {
+		httpError(w, "status must be in_transit, delivered or cancelled", http.StatusBadRequest)
+		return
+	}
+	moveShipmentByOrder(w, orderID, req.Status, "", "")
+}
+
+// moveShipmentByOrder applies one status change to an order's shipment, forward only.
+// location and description are optional; the shipment's city and the standard wording
+// for the step are used when they are empty. Both the worker's PUT and the carrier
+// webhook come through here, so they follow the same rules.
+func moveShipmentByOrder(w http.ResponseWriter, orderID int, status, location, description string) {
+	if description == "" {
+		description = shipmentSteps[status]
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		httpError(w, "failed to update shipment", http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback()
+
+	// Lock the row so two events for one order can't interleave.
+	var shipmentID int
+	var current string
+	var trackingCol, city sql.NullString
+	err = tx.QueryRow(
+		`SELECT id, status, tracking_number, city FROM shipments WHERE order_id = $1 FOR UPDATE`,
+		orderID,
+	).Scan(&shipmentID, &current, &trackingCol, &city)
+	if err == sql.ErrNoRows {
+		httpError(w, "no shipment for this order", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		log.Printf("update shipment: read order %d: %v", orderID, err)
+		httpError(w, "failed to update shipment", http.StatusInternalServerError)
+		return
+	}
+
+	tracking := trackingCol.String
+	respond := func(changed bool, status string) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"shipment_id": shipmentID, "tracking_number": tracking, "status": status, "changed": changed,
+		})
+	}
+
+	// Cancelled and delivered are final. For the rest, only forward moves count.
+	forward := false
+	switch {
+	case current == "cancelled" || current == "delivered":
+	case status == "cancelled":
+		forward = true
+	default:
+		forward = shipmentRank[status] > shipmentRank[current]
+	}
+	if !forward {
+		log.Printf("Shipment for order %d is %s, ignoring request for %s", orderID, current, status)
+		respond(false, current)
+		return
+	}
+
+	if _, err := tx.Exec(
+		`UPDATE shipments SET status = $1::text, updated_at = NOW(),
+		        shipped_at = CASE WHEN $1::text IN ('in_transit', 'delivered') THEN COALESCE(shipped_at, NOW()) ELSE shipped_at END,
+		        delivered_at = CASE WHEN $1::text = 'delivered' THEN NOW() ELSE delivered_at END
+		 WHERE id = $2`,
+		status, shipmentID,
+	); err != nil {
+		log.Printf("update shipment %d: %v", shipmentID, err)
+		httpError(w, "failed to update shipment", http.StatusInternalServerError)
+		return
+	}
+	if _, err := tx.Exec(
+		`INSERT INTO tracking_events (shipment_id, status, location, description, occurred_at)
+		 VALUES ($1, $2, $3, $4, NOW())`,
+		shipmentID, status, orDefault(location, city.String), description,
+	); err != nil {
+		log.Printf("tracking event for shipment %d: %v", shipmentID, err)
+		httpError(w, "failed to update shipment", http.StatusInternalServerError)
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		log.Printf("update shipment %d: commit: %v", shipmentID, err)
+		httpError(w, "failed to update shipment", http.StatusInternalServerError)
+		return
+	}
+
+	publishEvent("shipment."+status, map[string]interface{}{
+		"shipment_id":     shipmentID,
+		"order_id":        orderID,
+		"tracking_number": tracking,
+		"status":          status,
+	})
+	respond(true, status)
+}
+
 func handleShipment(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(r.URL.Path, "/shipments/by-order/") {
+		handleShipmentByOrder(w, r)
+		return
+	}
 	id := strings.TrimPrefix(r.URL.Path, "/shipments/")
 	if id == "" {
 		httpError(w, "shipment id required", http.StatusBadRequest)
@@ -359,42 +544,37 @@ func handleCarrierWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var shipmentID, orderID int
+	// The webhook is open to the internet, so it only accepts what a carrier can really
+	// report. Cancelling is our own decision (the order was cancelled), never the carrier's.
+	if req.TrackingNumber == "" {
+		httpError(w, "tracking_number is required", http.StatusBadRequest)
+		return
+	}
+	if req.Status != "in_transit" && req.Status != "delivered" {
+		httpError(w, "status must be in_transit or delivered", http.StatusBadRequest)
+		return
+	}
+
+	var orderID int
 	err := db.QueryRow(
-		"SELECT id, order_id FROM shipments WHERE tracking_number = $1",
+		"SELECT order_id FROM shipments WHERE tracking_number = $1",
 		req.TrackingNumber,
-	).Scan(&shipmentID, &orderID)
+	).Scan(&orderID)
 	if err != nil {
 		httpError(w, "tracking number not found", http.StatusNotFound)
 		return
 	}
 
-	// Update shipment status
-	db.Exec("UPDATE shipments SET status = $1, updated_at = NOW() WHERE id = $2", req.Status, shipmentID)
+	// Same forward-only, repeat-safe move the worker uses: a replayed or late "in_transit"
+	// after "delivered" changes nothing, and a cancelled shipment stays cancelled.
+	moveShipmentByOrder(w, orderID, req.Status, req.Location, req.Description)
+}
 
-	if req.Status == "delivered" {
-		db.Exec("UPDATE shipments SET delivered_at = NOW() WHERE id = $1", shipmentID)
-	} else if req.Status == "in_transit" {
-		db.Exec("UPDATE shipments SET shipped_at = COALESCE(shipped_at, NOW()) WHERE id = $1", shipmentID)
+func orDefault(v, fallback string) string {
+	if v == "" {
+		return fallback
 	}
-
-	// Record tracking event
-	db.Exec(
-		`INSERT INTO tracking_events (shipment_id, status, location, description, occurred_at)
-		 VALUES ($1, $2, $3, $4, NOW())`,
-		shipmentID, req.Status, req.Location, req.Description,
-	)
-
-	publishEvent("shipment."+req.Status, map[string]interface{}{
-		"shipment_id":     shipmentID,
-		"order_id":        orderID,
-		"tracking_number": req.TrackingNumber,
-		"status":          req.Status,
-		"location":        req.Location,
-	})
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "accepted"})
+	return v
 }
 
 func generateTrackingNumber(carrier string) string {

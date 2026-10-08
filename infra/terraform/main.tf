@@ -65,3 +65,13 @@ module "rds" {
   master_username               = module.secrets_manager.db_username
   master_credentials_secret_arn = module.secrets_manager.db_credentials_secret_arn
 }
+
+moved {
+  from = module.rds.aws_secretsmanager_secret.connection
+  to   = module.secrets_manager.aws_secretsmanager_secret.db_connection[0]
+}
+
+moved {
+  from = module.rds.aws_secretsmanager_secret_version.connection
+  to   = module.secrets_manager.aws_secretsmanager_secret_version.db_connection[0]
+}

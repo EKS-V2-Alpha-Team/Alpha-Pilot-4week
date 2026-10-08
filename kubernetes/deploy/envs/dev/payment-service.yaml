@@ -1,5 +1,5 @@
 # payment-service in dev.
 image:
-  tag: payment-service-68fc760e
+  tag: payment-service-cc4565f8
 
 replicaCount: 1

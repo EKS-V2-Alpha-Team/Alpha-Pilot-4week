@@ -7,7 +7,7 @@ Cluster tools the apps depend on. ArgoCD is installed once by hand; ArgoCD insta
 | `helmfile.yaml` + `helm-values/argocd-values.yaml` | ArgoCD, installed by hand once                                                                    |
 | `platform/root-app.yaml`                           | Root app, applied by hand once; points at `platform/apps/`                                        |
 | `platform/apps/`                                   | One ArgoCD Application per tool: upstream chart at a pinned version + our values file             |
-| `platform/manifests/`                              | Our own cluster resources (ClusterIssuers, ClusterSecretStore, Karpenter EC2NodeClass + NodePool, `order-platform` namespace, default gp3 StorageClass) |
+| `platform/manifests/`                              | Our own cluster resources (ClusterIssuers, ClusterSecretStore, Karpenter EC2NodeClass + NodePool, `order-platform` namespace, default gp3 StorageClass, default `ebs-csi` VolumeSnapshotClass) |
 | `platform/apps/`                                   | One ArgoCD Application per tool (pinned chart + our values), plus the services ApplicationSet     |
 | `platform/manifests/`                              | Our own cluster resources (ClusterIssuers, ClusterSecretStore, Karpenter EC2NodeClass + NodePool) |
 | `helm-values/`                                     | Values for every chart. Non-obvious settings are explained inline                                 |
@@ -22,8 +22,9 @@ Cluster tools the apps depend on. ArgoCD is installed once by hand; ArgoCD insta
 | External Secrets             | Copies Secrets Manager entries (RDS password, JWT secret) into Kubernetes Secrets                  | -3   |
 | cert-manager                 | Gets Let's Encrypt certificates                                                                    | -3   |
 | Karpenter                    | Adds EC2 nodes when pods don't fit                                                                 | -3   |
+| SnapScheduler                | Takes scheduled VolumeSnapshots and deletes old ones (Postgres: daily, keep 7)                     | -3   |
 | metrics-server               | CPU/memory numbers for the HPA                                                                     | -3   |
-| `platform/manifests/`        | ClusterIssuers, ClusterSecretStore, Karpenter EC2NodeClass + NodePool (need the CRDs from wave -3) | -2   |
+| `platform/manifests/`        | ClusterIssuers, ClusterSecretStore, Karpenter EC2NodeClass + NodePool, VolumeSnapshotClass (need the CRDs from wave -3 and the snapshot-controller add-on) | -2   |
 | Traefik                      | Routes requests to services                                                                        | -1   |
 | ExternalDNS                  | Points the domain at the NLB in Route 53                                                           | -1   |
 | Reloader                     | Restarts pods when a secret rotates                                                                | -1   |
@@ -46,7 +47,7 @@ Tools that call AWS get a role through an EKS Pod Identity association in `infra
 | External Secrets             | `external-secrets` / `external-secrets`        |
 | order-service, worker (SQS)  | `order-platform` / `order-service`, `worker`   |
 
-Traefik, Reloader, metrics-server, kube-prometheus-stack and ArgoCD don't call AWS.
+Traefik, Reloader, SnapScheduler, metrics-server, kube-prometheus-stack and ArgoCD don't call AWS. EBS snapshots are taken by the EBS CSI driver, whose role is in `infra/terraform/modules/eks/`.
 
 ## Rules
 
@@ -94,7 +95,6 @@ kubectl get clusterissuer                             # both READY True
 
 ## Known gaps
 
-- Not installed yet: VolumeSnapshotClass + snapshot-controller.
 - Redis has no password. Only the gateway uses it, for rate-limit counters, and it fails open.
 - Grafana generates its own admin password; the Secrets Manager one isn't wired in yet.
 

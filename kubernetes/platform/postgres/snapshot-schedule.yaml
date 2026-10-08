@@ -1,0 +1,19 @@
+apiVersion: snapscheduler.backube/v1
+kind: SnapshotSchedule
+metadata:
+  name: postgres-daily
+  namespace: order-platform
+  annotations:
+    # The CRD comes from SnapScheduler (wave -3); don't fail the postgres sync if it's missing.
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  claimSelector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+  # 01:00 UTC every day: 02:00 UK time during BST, 01:00 in winter (GMT).
+  # SnapScheduler runs on UTC and its schedule field doesn't accept a timezone.
+  schedule: "0 1 * * *"
+  retention:
+    maxCount: 7
+  snapshotTemplate:
+    snapshotClassName: ebs-csi

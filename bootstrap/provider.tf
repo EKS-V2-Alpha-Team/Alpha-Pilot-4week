@@ -9,7 +9,7 @@ terraform {
   }
 
   backend "s3" {
-    bucket       = "eks-v2-dev-tf-state"
+    bucket       = "eks-v2-prod-tfstate"
     key          = "bootstrap/terraform.tfstate"
     region       = "eu-west-2"
     encrypt      = true
@@ -28,4 +28,3 @@ provider "aws" {
     }
   }
 }
-

@@ -16,14 +16,19 @@ permissions:
 
 jobs:
   terraform-plan:
-    name: Run Terraform Plan
+    name: Run Terraform Plan (${{ matrix.environment }})
     # Manual runs only from main
     if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
+    strategy:
+      fail-fast: false # one environment failing doesn't cancel the others
+      matrix:
+        environment: [dev, staging, prod]
+
     defaults:
       run:
-        working-directory: ./infra/terraform
+        working-directory: ./infra/terraform/environments/${{ matrix.environment }}
 
     env:
       TF_VERSION: "1.16.3"
@@ -49,9 +54,10 @@ jobs:
           terraform init
 
       - name: Terraform Format
+        if: matrix.environment == 'dev' # check all code once, not three times
         run: |
           echo "Running terraform fmt check..."
-          terraform fmt -check -recursive
+          terraform fmt -check -recursive ../..
 
       - name: Terraform Validate
         run: |
@@ -59,6 +65,7 @@ jobs:
           terraform validate
 
       - name: Run checkov
+        if: matrix.environment == 'dev' # scans the whole repo, so once is enough
         uses: bridgecrewio/checkov-action@v12
         continue-on-error: true
         with:
@@ -73,8 +80,9 @@ jobs:
       - name: Upload plan artifact
         uses: actions/upload-artifact@v7
         with:
-          name: tfplan
-          path: infra/terraform/tfplan.binary
+          # dev keeps the name "tfplan" so the existing apply workflow still finds it
+          name: ${{ matrix.environment == 'dev' && 'tfplan' || format('tfplan-{0}', matrix.environment) }}
+          path: infra/terraform/environments/${{ matrix.environment }}/tfplan.binary
           retention-days: 5
 
       - name: Post plan comment
@@ -83,15 +91,15 @@ jobs:
         with:
           token: ${{ github.token }}
           planfile: tfplan.binary
-          working-directory: ./infra/terraform
-          header: terraform plan
+          working-directory: ./infra/terraform/environments/${{ matrix.environment }}
+          header: terraform plan (${{ matrix.environment }})
 
       - name: Add plan to run summary
         if: github.event_name == 'workflow_dispatch'
         run: |
           echo "Writing the plan to the run summary..."
           {
-            echo "## Terraform plan"
+            echo "## Terraform plan (${{ matrix.environment }})"
             echo "To apply, run the Terraform Apply workflow with terraform_plan_run_id=${{ github.run_id }}"
             echo '```'
             terraform show -no-color tfplan.binary

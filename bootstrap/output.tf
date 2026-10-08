@@ -28,3 +28,10 @@ output "route53_hosted_zone_arn" {
   description = "ARN of the Route 53 hosted zone"
   value       = aws_route53_zone.main.arn
 }
+
+# new state
+
+output "state_bucket_names" {
+  description = "Terraform state bucket names, keyed by environment tier"
+  value       = { for k, b in aws_s3_bucket.tf_state : k => b.bucket }
+}

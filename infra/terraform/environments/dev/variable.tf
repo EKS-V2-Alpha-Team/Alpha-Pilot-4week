@@ -5,13 +5,13 @@ variable "aws_region" {
 }
 
 variable "project_name" {
-  description = "This is the project name"
+  description = "Project name"
   type        = string
   default     = "eks-v2"
 }
 
 variable "environment" {
-  description = "Deployment environment."
+  description = "Deployment environment"
   type        = string
   default     = "dev"
 
@@ -21,6 +21,7 @@ variable "environment" {
   }
 }
 
+# Network
 variable "vpc_cidr" {
   description = "CIDR block for the VPC"
   type        = string
@@ -28,19 +29,19 @@ variable "vpc_cidr" {
 }
 
 variable "public_subnet_cidrs" {
-  description = "IDs of the public subnets"
+  description = "CIDR blocks for the public subnets"
   type        = list(string)
   default     = ["10.6.0.0/24", "10.6.1.0/24", "10.6.2.0/24"]
 }
 
 variable "private_subnet_cidrs" {
-  description = "IDs of the private subnets"
+  description = "CIDR blocks for the private subnets"
   type        = list(string)
   default     = ["10.6.64.0/19", "10.6.96.0/19", "10.6.128.0/19"]
 }
 
 variable "db_subnet_cidrs" {
-  description = "Name of the DB subnet group"
+  description = "CIDR blocks for the database subnets"
   type        = list(string)
   default     = ["10.6.32.0/24", "10.6.33.0/24", "10.6.34.0/24"]
 }
@@ -51,6 +52,7 @@ variable "azs" {
   default     = ["eu-west-2a", "eu-west-2b", "eu-west-2c"]
 }
 
+# Access and DNS
 variable "cluster_admin_principal_arns" {
   description = "Extra IAM user/role ARNs to grant EKS cluster admin access via access entries"
   type        = list(string)
@@ -61,4 +63,29 @@ variable "route53_hosted_zone_name" {
   description = "Route 53 hosted zone"
   type        = string
   default     = "eksv2.naimaosmann.com"
+}
+
+# EKS system node group (Karpenter manages workload nodes)
+variable "node_instance_types" {
+  description = "EC2 instance types for the EKS system node group"
+  type        = list(string)
+  default     = ["t3.medium"]
+}
+
+variable "node_desired_size" {
+  description = "Desired number of nodes in the system node group"
+  type        = number
+  default     = 2
+}
+
+variable "node_min_size" {
+  description = "Minimum number of nodes in the system node group"
+  type        = number
+  default     = 2
+}
+
+variable "node_max_size" {
+  description = "Maximum number of nodes in the system node group"
+  type        = number
+  default     = 3
 }

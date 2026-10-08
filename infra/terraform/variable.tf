@@ -52,7 +52,7 @@ variable "azs" {
 }
 
 variable "cluster_admin_principal_arns" {
-  description = "IAM user/role ARNs to grant EKS cluster admin access via access entries"
+  description = "Extra IAM user/role ARNs to grant EKS cluster admin access via access entries"
   type        = list(string)
   default     = []
 }

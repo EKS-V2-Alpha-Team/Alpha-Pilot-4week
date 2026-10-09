@@ -76,7 +76,13 @@ This is not optional. Your README is part of the submission.
 
 **Storage** - Postgres holds the only durable state in the system. How is the PVC backed? Encrypted? Snapshotted? What is your restore procedure and have you actually tested it?
 
-**Scaling strategy** - which services scale, on what metric, with HPA or KEDA? What stays fixed? What breaks first under load?
+**Scaling strategy** - HPA is enabled for the API gateway, dashboard API, inventory, notification, order, payment and shipping services. These services scale on CPU utilisation with a target of 70%, from a minimum of 2 replicas to a maximum of 5.
+
+The scheduler stays fixed at one replica because it is a singleton service and cannot be used with HPA. The worker also stays fixed for now because it processes SQS messages, where queue depth would be a better scaling signal than CPU utilisation.
+
+metrics-server provides the CPU metrics used by HPA. As load increases, HPA adds pods. If the additional pods cannot fit on the existing nodes, Karpenter can provision another node.
+
+Live scaling will be verified using `kubectl top pods`, HPA scale-up under load and Karpenter node provisioning.
 
 **Database migrations** - seven services share one database. How do schema changes get applied? Job, init container, manual? What about rollback?
 

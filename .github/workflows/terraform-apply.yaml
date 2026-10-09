@@ -1,8 +1,18 @@
 name: Terraform Apply
 
+# Applies a saved plan to ONE environment. The environment word picks the folder, the GitHub
+# environment the job runs as, the plan artifact and the queue.
 on:
   workflow_dispatch:
     inputs:
+      environment:
+        description: "Environment to apply to"
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
       terraform_plan_run_id:
         description: "Run ID of the Terraform plan to apply"
         required: true
@@ -10,7 +20,7 @@ on:
 
 env:
     AWS_REGION: ${{ vars.AWS_REGION }}
-    TF_WORKING_DIR: infra/terraform
+    TF_WORKING_DIR: infra/terraform/environments/${{ inputs.environment }}
     TF_VERSION: "1.16.3"
 
 permissions:
@@ -20,7 +30,14 @@ permissions:
 
 jobs:
     terraform-apply:
+        name: Terraform Apply (${{ inputs.environment }})
         runs-on: ubuntu-latest
+        environment: ${{ inputs.environment }}
+
+        # One apply per environment at a time. Destroy shares this queue name.
+        concurrency:
+            group: terraform-${{ inputs.environment }}
+            cancel-in-progress: false
 
         defaults:
             run:
@@ -47,9 +64,9 @@ jobs:
          - name: Download Terraform Plan
            uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
            with:
-              name: tfplan
+              name: tfplan-${{ inputs.environment }}
               run-id: ${{ inputs.terraform_plan_run_id }}
-              path: infra/terraform
+              path: ${{ env.TF_WORKING_DIR }}
               github-token: ${{ secrets.GITHUB_TOKEN }}
 
          - name: Terraform Apply

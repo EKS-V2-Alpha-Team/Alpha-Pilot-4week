@@ -13,6 +13,15 @@ on:
       - ".github/workflows/argocd-bootstrap.yaml"
   workflow_dispatch:
     inputs:
+      # dev only for now: this stack has ONE state file (argocd-bootstrap/terraform.tfstate in
+      # eks-v2-dev-tf-state). Add staging and prod once that state has a key per environment.
+      environment:
+        description: "Environment"
+        required: true
+        type: choice
+        default: dev
+        options:
+          - dev
       terraform_plan_run_id:
         description: "Run ID of the ArgoCD Bootstrap plan to apply (leave empty to only plan)"
         required: false
@@ -34,7 +43,7 @@ jobs:
     name: Terraform Plan (argocd-bootstrap)
     if: github.event_name == 'pull_request' || inputs.terraform_plan_run_id == ''
     runs-on: ubuntu-latest
-    environment: dev
+    environment: ${{ inputs.environment || 'dev' }}
 
     env:
       CLUSTER_NAME: ${{ vars.CLUSTER_NAME }}
@@ -83,7 +92,7 @@ jobs:
       - name: Upload plan artifact
         uses: actions/upload-artifact@v7
         with:
-          name: tfplan-argocd-bootstrap
+          name: tfplan-argocd-bootstrap-${{ inputs.environment || 'dev' }}
           path: |
             ${{ env.TF_WORKING_DIR }}/tfplan.binary
             ${{ env.TF_WORKING_DIR }}/.terraform.lock.hcl
@@ -114,9 +123,9 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.terraform_plan_run_id != ''
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    environment: dev
+    environment: ${{ inputs.environment || 'dev' }}
     concurrency:
-      group: argocd-bootstrap-apply
+      group: argocd-bootstrap-${{ inputs.environment || 'dev' }}
       cancel-in-progress: false
 
     env:
@@ -158,7 +167,7 @@ jobs:
       - name: Download Terraform Plan
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
-          name: tfplan-argocd-bootstrap
+          name: tfplan-argocd-bootstrap-${{ inputs.environment || 'dev' }}
           run-id: ${{ inputs.terraform_plan_run_id }}
           path: ${{ env.TF_WORKING_DIR }}
           github-token: ${{ secrets.GITHUB_TOKEN }}

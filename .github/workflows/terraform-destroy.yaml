@@ -1,25 +1,35 @@
 name: Terraform Destroy
 
+# Destroys ONE environment. prod is not in the list. The "destroy" label on a PR only posts a dev
+# destroy plan, nothing is destroyed.
 on:
   workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to destroy"
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
   pull_request:
     branches:
       - main
     types: [labeled]
 
 env:
-  TF_WORKING_DIR: infra/terraform
+  TF_WORKING_DIR: infra/terraform/environments/${{ inputs.environment || 'dev' }}
   TF_VERSION: "1.16.3"
-
-concurrency:
-  group: terraform-state
-  cancel-in-progress: false
 
 jobs:
   destroy-plan:
-    name: Terraform Destroy Plan
+    name: Terraform Destroy Plan (${{ inputs.environment || 'dev' }})
     if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'destroy'
     runs-on: ubuntu-latest
+
+    concurrency:
+      group: terraform-${{ inputs.environment || 'dev' }}
+      cancel-in-progress: false
 
     permissions:
       id-token: write
@@ -58,7 +68,7 @@ jobs:
       - name: Upload destroy plan artifact
         uses: actions/upload-artifact@v7
         with:
-          name: tfplan-destroy
+          name: tfplan-destroy-${{ inputs.environment || 'dev' }}
           path: ${{ env.TF_WORKING_DIR }}/destroy.tfplan
           retention-days: 5
 
@@ -82,13 +92,16 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   destroy:
-    name: Terraform Destroy
+    name: Terraform Destroy (${{ inputs.environment }})
     needs: destroy-plan
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 90
-    # Approval gate: waits until a required reviewer of this environment approves the run
-    environment: terraform-destroy
+    environment: ${{ inputs.environment }}
+
+    concurrency:
+      group: terraform-${{ inputs.environment }}
+      cancel-in-progress: false
 
     permissions:
       id-token: write
@@ -121,7 +134,7 @@ jobs:
       - name: Download destroy plan
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
-          name: tfplan-destroy
+          name: tfplan-destroy-${{ inputs.environment || 'dev' }}
           path: ${{ env.TF_WORKING_DIR }}
 
       - name: Terraform Destroy

@@ -2,6 +2,17 @@ name: Terraform Plan
 
 on:
   workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to plan"
+        required: true
+        type: choice
+        default: all
+        options:
+          - all
+          - dev
+          - staging
+          - prod
   pull_request:
     branches:
       - main
@@ -24,7 +35,14 @@ jobs:
     strategy:
       fail-fast: false # one environment failing doesn't cancel the others
       matrix:
-        environment: [dev, staging, prod]
+        # A PR plans every environment. A manual run plans the one picked (or all of them).
+        environment: ${{ fromJSON(inputs.environment && inputs.environment != 'all' && format('["{0}"]', inputs.environment) || '["dev","staging","prod"]') }}
+
+    # One plan per environment and ref at a time. A new push to a PR replaces its running plan.
+    # A manual run is never cancelled.
+    concurrency:
+      group: terraform-plan-${{ matrix.environment }}-${{ github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
     defaults:
       run:
@@ -80,8 +98,8 @@ jobs:
       - name: Upload plan artifact
         uses: actions/upload-artifact@v7
         with:
-          # dev keeps the name "tfplan" so the existing apply workflow still finds it
-          name: ${{ matrix.environment == 'dev' && 'tfplan' || format('tfplan-{0}', matrix.environment) }}
+          # Apply downloads tfplan-<environment>, so a plan can only be applied where it was made
+          name: tfplan-${{ matrix.environment }}
           path: infra/terraform/environments/${{ matrix.environment }}/tfplan.binary
           retention-days: 5
 
@@ -100,7 +118,7 @@ jobs:
           echo "Writing the plan to the run summary..."
           {
             echo "## Terraform plan (${{ matrix.environment }})"
-            echo "To apply, run the Terraform Apply workflow with terraform_plan_run_id=${{ github.run_id }}"
+            echo "To apply, run the Terraform Apply workflow with environment=${{ matrix.environment }} and terraform_plan_run_id=${{ github.run_id }}"
             echo '```'
             terraform show -no-color tfplan.binary
             echo '```'

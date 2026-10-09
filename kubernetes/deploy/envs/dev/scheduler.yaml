@@ -1,5 +1,5 @@
 # scheduler in dev.
 image:
-  tag: scheduler-cc4565f8
+  tag: scheduler-e21dd59f
 
 replicaCount: 1

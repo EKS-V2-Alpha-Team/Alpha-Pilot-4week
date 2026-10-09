@@ -1,6 +1,6 @@
 # inventory-service in dev.
 image:
-  tag: inventory-service-cc4565f8
+  tag: inventory-service-e21dd59f
 
 replicaCount: 1
 

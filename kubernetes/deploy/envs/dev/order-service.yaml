@@ -1,6 +1,6 @@
 # order-service in dev.
 image:
-  tag: order-service-cc4565f8
+  tag: order-service-e21dd59f
 
 replicaCount: 1
 

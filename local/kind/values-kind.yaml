@@ -1,0 +1,60 @@
+# kind overlay for the shared microservice chart.
+#
+# Applied LAST, after the same value files the Argo CD ApplicationSet uses:
+#   services/<svc>/values.yaml -> envs/<env>/common.yaml -> envs/<env>/<svc>.yaml -> THIS
+#
+# Rule: only switch off or replace what cannot exist outside AWS.
+# Everything else (ports, probes, resources, security context, replicas)
+# comes from the real values, so kind tests the real config.
+#
+# The image TAG is set per service by kind.mk (--set image.tag=<svc>-local),
+# because one overlay file can't hold nine different tags.
+
+# Locally built images (make kind-build), loaded into kind, never pulled from ECR.
+image:
+  repository: order-platform-local
+  pullPolicy: IfNotPresent
+
+# --- Things that need CRDs or AWS that kind doesn't have -------------------
+
+# On EKS, DATABASE_URL is built by an ExternalSecret from Secrets Manager.
+# kind has no External Secrets Operator and no Secrets Manager, so the
+# ExternalSecret is switched off and DATABASE_URL is set directly below.
+database:
+  enabled: false
+
+# Extra secrets pulled from Secrets Manager (e.g. JWT_SECRET). Same reason.
+externalSecrets:
+  env: []
+
+# Needs the Prometheus Operator CRDs (not installed in kind).
+serviceMonitor:
+  enabled: false
+
+# Traefik runs in kind (make kind-platform). Only api-gateway turns its route on
+# (from its dev values); here the route is made to work locally: localhost,
+# plain HTTP on the web entry point, and no TLS, so no cert-manager Certificate.
+ingressRoute:
+  host: localhost
+  entryPoints:
+    - web
+  tls:
+    enabled: false
+
+# --- Local stand-ins, the same values docker-compose.yml uses ---------------
+# These land in a ConfigMap, which is fine ONLY because they are throwaway
+# local values. Never put real credentials here.
+env:
+  # In-cluster Postgres from kubernetes/platform/postgres (user/password
+  # are created by `make kind-platform`).
+  DATABASE_URL: "postgres://app:localdev@postgres:5432/orders?sslmode=disable" # checkov:skip=CKV_SECRET_4: throwaway local kind credentials, same as docker-compose.yml
+  REDIS_URL: "redis://redis:6379"
+  JWT_SECRET: "local-dev-secret" # checkov:skip=CKV_SECRET_6: throwaway local kind value, same as docker-compose.yml
+
+  # SQS via floci running inside kind (local/kind/floci.yaml), not AWS.
+  SQS_QUEUE_URL: "http://floci:4566/000000000000/order-events"
+  AWS_ENDPOINT_URL: "http://floci:4566"
+  # Same region as dev on EKS and as floci.yaml (where the queues are created).
+  AWS_REGION: "eu-west-2"
+  AWS_ACCESS_KEY_ID: "test"
+  AWS_SECRET_ACCESS_KEY: "test"

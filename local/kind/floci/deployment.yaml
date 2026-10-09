@@ -1,0 +1,58 @@
+#  kind only. floci = local AWS emulator, used here for SQS.
+# Mirrors the floci service in docker-compose.yml (same image, same init
+# script), so services that publish/consume order events work in kind
+# instead of crash-looping on a real AWS SQS URL.
+#
+# The init script is loaded into the ConfigMap "floci-init" by
+# `make kind-platform` from scripts/floci-init.sh.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: floci
+  labels:
+    app.kubernetes.io/name: floci
+    app.kubernetes.io/part-of: kind-local
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: floci
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: floci
+    spec:
+      # Kubernetes injects <SERVICE>_PORT=tcp://<ip>:<port> env vars for every
+      # Service. For the Service "floci" that is FLOCI_PORT, which floci reads
+      # as its own port setting and crashes ("Expected an integer value").
+      # Discovery uses DNS (floci:4566), so these vars aren't needed.
+      enableServiceLinks: false
+      containers:
+        - name: floci
+          image: floci/floci:2.2.0-compat
+          env:
+            - name: FLOCI_HOSTNAME
+              value: floci
+            # Region the init script's `aws sqs create-queue` calls use, so the
+            # queues match dev on EKS (eu-west-2). Must equal AWS_REGION in
+            # values-kind.yaml, or the services look in a different region.
+            - name: AWS_REGION
+              value: eu-west-2
+            - name: AWS_DEFAULT_REGION
+              value: eu-west-2
+          ports:
+            - name: http
+              containerPort: 4566
+          readinessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 5
+          volumeMounts:
+            - name: init
+              mountPath: /etc/floci/init/ready.d/init.sh
+              subPath: init.sh
+      volumes:
+        - name: init
+          configMap:
+            name: floci-init
+            defaultMode: 0755

@@ -2,15 +2,15 @@
 
 In-cluster PostgreSQL for the dev environment. Runs as a single StatefulSet in `order-platform` with a 20Gi encrypted gp3 volume. Production will continue to use RDS.
 
-| File | What |
-|---|---|
-| `statefulset.yaml` | PostgreSQL pod, health checks and persistent 20Gi storage |
-| `service.yaml` | `postgres` for application traffic and `postgres-headless` for StatefulSet identity |
-| `snapshot-schedule.yaml` | Daily EBS snapshot of the Postgres volume at 01:00 UTC (02:00 UK in summer), keeps the last 7 (SnapScheduler) |
-| `../manifests/volumesnapshotclass-ebs.yaml` | Default VolumeSnapshotClass `ebs-csi` used by the schedule |
-| `../apps/postgres.yaml` | ArgoCD Application, sync wave `-1` |
-| `../manifests/postgres-external-secret.yaml` | Creates `postgres-credentials` from AWS Secrets Manager |
-| `../manifests/storageclass-gp3.yaml` | Encrypted gp3 StorageClass |
+| File                                         | What                                                                                                          |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `statefulset.yaml`                           | PostgreSQL pod, health checks and persistent 20Gi storage                                                     |
+| `service.yaml`                               | `postgres` for application traffic and `postgres-headless` for StatefulSet identity                           |
+| `snapshot-schedule.yaml`                     | Daily EBS snapshot of the Postgres volume at 01:00 UTC (02:00 UK in summer), keeps the last 7 (SnapScheduler) |
+| `../manifests/volumesnapshotclass-ebs.yaml`  | Default VolumeSnapshotClass `ebs-csi` used by the schedule                                                    |
+| `../apps/postgres.yaml`                      | ArgoCD Application, sync wave `-1`                                                                            |
+| `../manifests/postgres-external-secret.yaml` | Creates `postgres-credentials` from AWS Secrets Manager                                                       |
+| `../manifests/storageclass-gp3.yaml`         | Encrypted gp3 StorageClass                                                                                    |
 
 ## Important design points
 
@@ -109,8 +109,17 @@ kubectl -n order-platform delete pod/postgres-restore-test pvc/postgres-restore-
 
 Replaces the live volume with a snapshot. Everything written after the snapshot is lost.
 
-1. Turn off auto-sync on the `postgres` ArgoCD app, or it scales the StatefulSet straight back up.
+1. Turn off auto-sync on the `platform` ArgoCD app (`../root-app.yaml`), then on `postgres` (`../apps/postgres.yaml`).
+   ```bash
+   kubectl -n argocd patch application platform --type merge -p '{"spec":{"syncPolicy":{"automated":null}}}'
+   kubectl -n argocd patch application postgres --type merge -p '{"spec":{"syncPolicy":{"automated":null}}}'
+   ```
 2. `kubectl -n order-platform scale statefulset postgres --replicas=0`
-3. `kubectl -n order-platform delete pvc postgres-data-postgres-0` (deletes the current EBS volume)
-4. Create a PVC named `postgres-data-postgres-0` with the same spec and `dataSource` as the restore test above.
-5. `kubectl -n order-platform scale statefulset postgres --replicas=1`, check the data, then turn auto-sync back on.
+3. Take a snapshot of the current volume (see "Take one now") and wait for `READYTOUSE` to be `true`. If the restore goes wrong, restore from this one to get back to where you started.
+4. `kubectl -n order-platform delete pvc postgres-data-postgres-0` (deletes the current EBS volume)
+5. Create a PVC named `postgres-data-postgres-0` with the same spec and `dataSource` as the restore test above.
+6. `kubectl -n order-platform scale statefulset postgres --replicas=1`, check the data, then turn auto-sync back on for `postgres` and `platform`.
+   ```bash
+   kubectl -n argocd patch application postgres --type merge -p '{"spec":{"syncPolicy":{"automated":{"prune":true,"selfHeal":true}}}}'
+   kubectl -n argocd patch application platform --type merge -p '{"spec":{"syncPolicy":{"automated":{"prune":true,"selfHeal":true}}}}'
+   ```

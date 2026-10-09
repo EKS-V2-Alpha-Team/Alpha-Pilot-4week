@@ -1,7 +1,5 @@
 name: Terraform Apply
 
-# Applies a saved plan to ONE environment. The environment word picks the folder, the GitHub
-# environment the job runs as, the plan artifact and the queue.
 on:
   workflow_dispatch:
     inputs:
@@ -29,12 +27,31 @@ permissions:
   actions: read
 
 jobs:
+    approve:
+        name: Approve prod apply
+        if: inputs.environment == 'prod'
+        runs-on: ubuntu-latest
+        timeout-minutes: 60
+        permissions:
+            issues: write
+        steps:
+         - name: Wait for approval
+           uses: trstringer/manual-approval@fa642940caf8412403569b28b2db4a1df08a83a3 # v1.13.1
+           with:
+             secret: ${{ github.token }}
+             approvers: ${{ vars.PROD_APPROVERS }}
+             minimum-approvals: 1
+             exclude-workflow-initiator-as-approver: true
+             issue-title: "Approve Terraform Apply to prod (plan run ${{ inputs.terraform_plan_run_id }})"
+             issue-body: "Started by @${{ github.actor }}. Read the plan in run ${{ inputs.terraform_plan_run_id }}, then comment approve or deny."
+
     terraform-apply:
         name: Terraform Apply (${{ inputs.environment }})
+        needs: approve
+        if: ${{ !cancelled() && (needs.approve.result == 'success' || needs.approve.result == 'skipped') }}
         runs-on: ubuntu-latest
         environment: ${{ inputs.environment }}
 
-        # One apply per environment at a time. Destroy shares this queue name.
         concurrency:
             group: terraform-${{ inputs.environment }}
             cancel-in-progress: false
@@ -47,11 +64,26 @@ jobs:
          - name: Checkout repository
            uses: actions/checkout@v7
 
+         - name: Check the plan was made on main
+           if: inputs.environment != 'dev'
+           env:
+             GH_TOKEN: ${{ github.token }}
+             PLAN_RUN_ID: ${{ inputs.terraform_plan_run_id }}
+           run: |
+             [[ "$PLAN_RUN_ID" =~ ^[0-9]+$ ]] || { echo "::error::terraform_plan_run_id must be a number"; exit 1; }
+             run=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${PLAN_RUN_ID}" \
+               --jq '[.path, .event, .head_branch, .conclusion] | join(" ")')
+             echo "Plan run ${PLAN_RUN_ID}: ${run}"
+             if [ "$run" != ".github/workflows/terraform-plan.yaml workflow_dispatch main success" ]; then
+               echo "::error::staging and prod only apply a successful Terraform Plan run started manually on main"
+               exit 1
+             fi
+
          - name: Configure AWS credentials
            uses: aws-actions/configure-aws-credentials@v6
            with:
              aws-region: ${{ env.AWS_REGION }}
-             role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+             role-to-assume: ${{ vars.AWS_ROLE_ARN }}
 
          - name: Setup Terraform
            uses: hashicorp/setup-terraform@v4

@@ -1,7 +1,5 @@
 name: Terraform Destroy
 
-# Destroys ONE environment. prod is not in the list. The "destroy" label on a PR only posts a dev
-# destroy plan, nothing is destroyed.
 on:
   workflow_dispatch:
     inputs:
@@ -12,6 +10,11 @@ on:
         options:
           - dev
           - staging
+          - prod
+      confirm:
+        description: "Type the environment name again to confirm"
+        required: true
+        type: string
   pull_request:
     branches:
       - main
@@ -41,6 +44,18 @@ jobs:
         working-directory: ${{ env.TF_WORKING_DIR }}
 
     steps:
+      - name: Check the confirmation
+        if: github.event_name == 'workflow_dispatch'
+        working-directory: .
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          if [ "$CONFIRM" != "$ENVIRONMENT" ]; then
+            echo "::error::Type \"$ENVIRONMENT\" in the confirm box to destroy it"
+            exit 1
+          fi
+
       - name: Checkout repository
         uses: actions/checkout@v7
 
@@ -48,7 +63,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-region: ${{ vars.AWS_REGION }}
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v4
@@ -91,10 +106,32 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+  approve:
+    name: Approve prod destroy
+    needs: destroy-plan
+    if: github.event_name == 'workflow_dispatch' && inputs.environment == 'prod'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      issues: write
+    steps:
+      - name: Wait for approval
+        uses: trstringer/manual-approval@fa642940caf8412403569b28b2db4a1df08a83a3 # v1.13.1
+        with:
+          secret: ${{ github.token }}
+          approvers: ${{ vars.PROD_APPROVERS }}
+          minimum-approvals: 1
+          exclude-workflow-initiator-as-approver: true
+          issue-title: "Approve Terraform Destroy of prod (run ${{ github.run_id }})"
+          issue-body: "Started by @${{ github.actor }}. The destroy plan is in the summary of run ${{ github.run_id }}. Comment approve or deny."
+
   destroy:
     name: Terraform Destroy (${{ inputs.environment }})
-    needs: destroy-plan
-    if: github.event_name == 'workflow_dispatch'
+    needs: [destroy-plan, approve]
+    if: >-
+      ${{ !cancelled() && github.event_name == 'workflow_dispatch'
+      && needs.destroy-plan.result == 'success'
+      && (needs.approve.result == 'success' || needs.approve.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     environment: ${{ inputs.environment }}
@@ -119,7 +156,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-region: ${{ vars.AWS_REGION }}
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v4

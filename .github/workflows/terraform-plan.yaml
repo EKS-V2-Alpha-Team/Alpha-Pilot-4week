@@ -35,11 +35,8 @@ jobs:
     strategy:
       fail-fast: false # one environment failing doesn't cancel the others
       matrix:
-        # A PR plans every environment. A manual run plans the one picked (or all of them).
         environment: ${{ fromJSON(inputs.environment && inputs.environment != 'all' && format('["{0}"]', inputs.environment) || '["dev","staging","prod"]') }}
 
-    # One plan per environment and ref at a time. A new push to a PR replaces its running plan.
-    # A manual run is never cancelled.
     concurrency:
       group: terraform-plan-${{ matrix.environment }}-${{ github.ref }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -58,7 +55,7 @@ jobs:
       - name: Configure AWS credentials w/ OIDC
         uses: aws-actions/configure-aws-credentials@v6
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
       - name: Setup Terraform
@@ -98,7 +95,6 @@ jobs:
       - name: Upload plan artifact
         uses: actions/upload-artifact@v7
         with:
-          # Apply downloads tfplan-<environment>, so a plan can only be applied where it was made
           name: tfplan-${{ matrix.environment }}
           path: infra/terraform/environments/${{ matrix.environment }}/tfplan.binary
           retention-days: 5

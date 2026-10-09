@@ -142,6 +142,12 @@ resource "aws_iam_role_policy" "github_actions_ecr" {
         Resource = "*"
       },
       {
+        Sid      = "EcrPublicLogin"
+        Effect   = "Allow"
+        Action   = ["ecr-public:GetAuthorizationToken", "sts:GetServiceBearerToken"]
+        Resource = "*"
+      },
+      {
         Sid    = "PushAndInspectImages"
         Effect = "Allow"
         Action = [

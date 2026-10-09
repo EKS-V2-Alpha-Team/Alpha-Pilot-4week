@@ -75,11 +75,11 @@ The reasoning and trade-offs behind these choices are in [ARCHITECTURE.md](ARCHI
 2. **Pull request checks**: each pull request runs only the pipelines for the code it changes.
    - **Services**: `go vet`, `go test -race`, `docker build` and a Trivy image scan that fails on HIGH or CRITICAL vulnerabilities.
    - **Helm**: `helm lint`, then every service is rendered and the manifests are validated against Kubernetes schemas with kubeconform.
-   - **Terraform**: `fmt`, `validate`, a Checkov security scan and a `terraform plan` posted as a comment on the pull request.
-3. **Provision infrastructure**: Terraform Apply is started manually and applies the exact plan reviewed on the pull request. Pipelines sign in to AWS through GitHub OIDC, so no AWS keys are stored.
+   - **Terraform**: `fmt`, `validate`, a Checkov security scan and a `terraform plan` for dev, staging and prod, each posted as a comment on the pull request. Pull requests use a read-only AWS role, so they can't change anything.
+3. **Provision infrastructure**: Terraform Apply is started manually for one environment and applies a saved plan. Staging and prod only accept a plan made by a manual Terraform Plan run on `main`, and prod waits for an approval from someone who didn't start the run. Pipelines sign in to AWS through GitHub OIDC with a role per environment, so no AWS keys are stored.
 4. **Release images**: on merge to `main`, each changed service's image is pushed to ECR, tagged with the commit SHA. The pipeline then commits the new tag to the dev values file in Git.
 5. **Deploy with GitOps**: ArgoCD sees the new tag in Git and rolls it out with a rolling update. No pipeline deploys to the cluster directly, and a rollback is a revert of the tag commit.
-6. **Tear down**: Terraform Destroy needs a manual approval before it runs.
+6. **Tear down**: Terraform Destroy asks for the environment and for its name typed again. Prod also waits for an approval, and its database has deletion protection on, so turn that off with an apply first.
 
 ---
 
@@ -128,12 +128,18 @@ Alpha-Pilot-4week/
 
 ### 1. Bootstrap Remote State, ECR & DNS
 
-Before provisioning infrastructure, run the bootstrap. It creates the S3 bucket for remote state, the ECR repository, the GitHub Actions OIDC role and the Route 53 hosted zone.
+Before provisioning infrastructure, run the bootstrap. It creates the S3 buckets for remote state, the ECR repository, the Route 53 hosted zone, and the GitHub Actions OIDC provider with its roles: one per environment, a read-only plan role and an image push role.
 
 ```bash
 terraform -chdir=bootstrap init
 terraform -chdir=bootstrap apply
 ```
+
+Copy the role ARNs from `terraform -chdir=bootstrap output` into GitHub:
+
+- `AWS_ROLE_ARN` on each of the `dev`, `staging` and `prod` environments, with the matching role.
+- `AWS_PLAN_ROLE_ARN`, `AWS_ECR_ROLE_ARN` and `PROD_APPROVERS` (GitHub usernames, comma-separated) as repository variables.
+- On each environment, set deployment branches to `main` only.
 
 Then delegate the subdomain by adding the hosted zone's four name servers as `NS` records in Cloudflare (see [kubernetes/README.md](kubernetes/README.md#dns-one-off)).
 
@@ -147,11 +153,11 @@ aws secretsmanager create-secret --name eks-v2-dev-argocd-deploy-key --secret-st
 
 ### 3. Provision Infrastructure
 
-In GitHub Actions, run **Terraform Plan**, then **Terraform Apply** with the plan's run ID.
+In GitHub Actions, run **Terraform Plan** on `main` for the environment, then **Terraform Apply** with the same environment and the plan's run ID.
 
 ### 4. Bootstrap ArgoCD
 
-Run **ArgoCD Bootstrap** with the run ID left empty to plan, then again with that plan's run ID to apply. ArgoCD then installs the platform tools and all nine services, and the pipeline waits until every application is healthy.
+Run **ArgoCD Bootstrap** (dev only for now) with the run ID left empty to plan, then again with that plan's run ID to apply. ArgoCD then installs the platform tools and all nine services, and the pipeline waits until every application is healthy.
 
 ### 5. Configure kubectl
 

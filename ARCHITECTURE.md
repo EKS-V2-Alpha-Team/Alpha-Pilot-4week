@@ -435,6 +435,8 @@ The platform runs three environments from the same code:
 
 **Why one account**: a separate prod account needs cross-account access for the shared ECR repository, the Route 53 zone, Secrets Manager and the Terraform state, which didn't fit the time we had. Prod is kept apart inside the account instead. Each environment has its own Terraform state, GitHub Environment and IAM role. The prod role only trusts jobs running as the `prod` GitHub Environment, which only deploys from `main`, and every prod apply or destroy waits for an approval from someone other than the person who started it.
 
+**Who can change an environment**: pull requests plan every environment with a read-only role and can't change anything. Apply, Destroy and ArgoCD Bootstrap run as the chosen GitHub Environment, which only deploys from `main`, and get that environment's role. Staging and prod only apply a plan made by a manual Terraform Plan run on `main`. Prod apply and destroy open an issue and wait for one of `PROD_APPROVERS` to comment `approve`; whoever started the run can't approve it. CI pushes images with a role that can only push to the shared ECR repository.
+
 **Promotion**: images are built once. Promoting a release copies the tested image tag from dev's values to staging's, then to prod's, in a pull request.
 
 ---

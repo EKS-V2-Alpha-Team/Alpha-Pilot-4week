@@ -41,7 +41,7 @@ Fixed by the brief: EKS 1.33 or above across three availability zones, Karpenter
 
 ![Architecture diagram](images/architecture.png)
 
-The platform runs in `eu-west-2`. Dev and staging share the non-prod AWS account, and prod has its own account (see [Environments](#environments)). Each environment has its own VPC, with three subnet tiers in each of three availability zones:
+The platform runs in `eu-west-2`, in one AWS account. Dev, staging and prod are kept apart by their own VPC, cluster, Terraform state, GitHub Environment and IAM role (see [Environments](#environments)). Each environment has its own VPC, with three subnet tiers in each of three availability zones:
 
 | Tier     | Contains                        | Internet access                         |
 | -------- | ------------------------------- | --------------------------------------- |
@@ -214,7 +214,7 @@ To make sure no order is lost between Postgres and SQS, order-service uses a tra
 
 | Stack                     | Creates                                                       | Run                                                             |
 | ------------------------- | ------------------------------------------------------------- | --------------------------------------------------------------- |
-| `bootstrap/`              | State bucket, ECR, GitHub OIDC provider and role, hosted zone | Once per account, locally                                       |
+| `bootstrap/`              | State bucket, ECR, GitHub OIDC provider and roles, hosted zone | Once per account, locally                                       |
 | `infra/terraform/`        | VPC, EKS, IAM, SQS, Secrets Manager, KMS                      | Through the Terraform Plan and Apply pipelines                  |
 | `infra/argocd-bootstrap/` | ArgoCD and the root Application                               | Through the ArgoCD Bootstrap pipeline, after the cluster exists |
 
@@ -426,14 +426,14 @@ The platform runs three environments from the same code:
 
 |                   | dev                                   | staging                                   | prod                                   |
 | ----------------- | ------------------------------------- | ----------------------------------------- | -------------------------------------- |
-| AWS account       | Non-prod                              | Non-prod                                  | Prod                                   |
+| AWS account       | Shared                                | Shared                                    | Shared                                 |
 | VPC CIDR          | `10.6.0.0/16`                         | `10.7.0.0/16`                             | `10.8.0.0/16`                          |
 | Hostname          | `dashboard.dev.eksv2.naimaosmann.com` | `dashboard.staging.eksv2.naimaosmann.com` | `dashboard.prod.eksv2.naimaosmann.com` |
 | ArgoCD sync       | Automatic                             | Automatic                                 | Manual                                 |
 | Terraform         | `envs/dev.tfvars`                     | `envs/staging.tfvars`                     | `envs/prod.tfvars`                     |
 | Kubernetes values | `kubernetes/deploy/envs/dev/`         | `kubernetes/deploy/envs/staging/`         | `kubernetes/deploy/envs/prod/`         |
 
-**Why a separate account for prod**: a mistake or a leaked credential in non-prod can't reach production data. Each environment has its own Terraform state, GitHub Environment and OIDC role, and the prod role only trusts the `prod` GitHub Environment, which requires a reviewer.
+**Why one account**: a separate prod account needs cross-account access for the shared ECR repository, the Route 53 zone, Secrets Manager and the Terraform state, which didn't fit the time we had. Prod is kept apart inside the account instead. Each environment has its own Terraform state, GitHub Environment and IAM role. The prod role only trusts jobs running as the `prod` GitHub Environment, which only deploys from `main`, and every prod apply or destroy waits for an approval from someone other than the person who started it.
 
 **Promotion**: images are built once. Promoting a release copies the tested image tag from dev's values to staging's, then to prod's, in a pull request.
 

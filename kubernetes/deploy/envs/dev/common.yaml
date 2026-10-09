@@ -1,6 +1,6 @@
 image:
   # CI pushes all services to this one repo, tagged <service>-<sha>.
-  repository: 7751501311900.dkr.ecr.eu-west-2.amazonaws.com/eks-v2-shared-ecr
+  repository: 751501311900.dkr.ecr.eu-west-2.amazonaws.com/eks-v2-shared-ecr
 
 env:
   AWS_REGION: eu-west-2

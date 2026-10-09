@@ -54,5 +54,5 @@ variable "route53_hosted_zone_name" {
 variable "legacy_repo_wide_trust" {
   description = "Let the dev role keep trusting every job in the repo. Set to false once the pipelines use the per-environment and plan roles."
   type        = bool
-  default     = true
+  default     = false
 }

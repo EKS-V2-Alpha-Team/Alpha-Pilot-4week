@@ -1,5 +1,5 @@
-# Dev root Application, installed by argocd-bootstrap.
-# Manages the dev platform components and services.
+# dev root Application, installed by infra/argocd-bootstrap on the dev cluster.
+# Installs every platform tool and the dev services from the platform-apps chart (apps/).
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -11,6 +11,9 @@ spec:
     repoURL: git@github.com:EKS-V2-Alpha-Team/Alpha-Pilot-4week.git
     targetRevision: main
     path: kubernetes/platform/apps
+    helm:
+      valuesObject:
+        environment: dev
   destination:
     server: https://kubernetes.default.svc
     namespace: argocd
@@ -18,4 +21,3 @@ spec:
     automated:
       prune: true
       selfHeal: true
-

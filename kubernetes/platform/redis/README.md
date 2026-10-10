@@ -6,7 +6,7 @@ Rate-limit counters for api-gateway. One pod in `order-platform`, a 1Gi encrypte
 |---|---|
 | `statefulset.yaml` | The pod and its disk |
 | `service.yaml` | `redis` (what the gateway uses) and `redis-headless` |
-| `../apps/redis.yaml` | The ArgoCD app, sync wave -1 |
+| `../apps/templates/redis.yaml` | The ArgoCD app, sync wave -1 |
 | `../manifests/storageclass-gp3.yaml` | The gp3 StorageClass, cluster default |
 | `../manifests/namespace-order-platform.yaml` | The namespace |
 

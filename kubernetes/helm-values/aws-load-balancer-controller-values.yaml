@@ -1,8 +1,5 @@
-clusterName: eks-v2-dev-cluster
+# clusterName and vpcTags are per environment: envs/<env>/aws-load-balancer-controller-values.yaml
 region: eu-west-2
-# Set explicitly so the controller doesn't depend on the node metadata service
-vpcTags:
-  Name: eks-v2-vpc
 
 # Must match the Pod Identity association in Terraform (kube-system / aws-load-balancer-controller).
 serviceAccount:

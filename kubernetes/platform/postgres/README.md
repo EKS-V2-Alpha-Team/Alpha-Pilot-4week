@@ -8,8 +8,8 @@ In-cluster PostgreSQL for the dev environment. Runs as a single StatefulSet in `
 | `service.yaml`                               | `postgres` for application traffic and `postgres-headless` for StatefulSet identity                           |
 | `snapshot-schedule.yaml`                     | Daily EBS snapshot of the Postgres volume at 01:00 UTC (02:00 UK in summer), keeps the last 7 (SnapScheduler) |
 | `../manifests/volumesnapshotclass-ebs.yaml`  | Default VolumeSnapshotClass `ebs-csi` used by the schedule                                                    |
-| `../apps/postgres.yaml`                      | ArgoCD Application, sync wave `-1`                                                                            |
-| `../manifests/postgres-external-secret.yaml` | Creates `postgres-credentials` from AWS Secrets Manager                                                       |
+| `../apps/templates/postgres.yaml`                      | ArgoCD Application, sync wave `-1`                                                                            |
+| `../manifests/envs/dev/postgres-external-secret.yaml` | Creates `postgres-credentials` from AWS Secrets Manager                                                       |
 | `../manifests/storageclass-gp3.yaml`         | Encrypted gp3 StorageClass                                                                                    |
 
 ## Important design points
@@ -25,7 +25,7 @@ In-cluster PostgreSQL for the dev environment. Runs as a single StatefulSet in `
 
 ## Snapshots
 
-The snapshot-controller EKS add-on (Terraform) installs the VolumeSnapshot CRDs. SnapScheduler (`../apps/snapscheduler.yaml`) creates a `VolumeSnapshot` of `postgres-data-postgres-0` every day and deletes the oldest past 7. Each one is a real EBS snapshot (`deletionPolicy: Delete`, so retention removes the EBS snapshot too).
+The snapshot-controller EKS add-on (Terraform) installs the VolumeSnapshot CRDs. SnapScheduler (`../apps/templates/snapscheduler.yaml`) creates a `VolumeSnapshot` of `postgres-data-postgres-0` every day and deletes the oldest past 7. Each one is a real EBS snapshot (`deletionPolicy: Delete`, so retention removes the EBS snapshot too).
 
 Snapshots are crash-consistent: restoring one is like Postgres restarting after a power cut, and it replays its WAL on startup.
 
@@ -109,7 +109,7 @@ kubectl -n order-platform delete pod/postgres-restore-test pvc/postgres-restore-
 
 Replaces the live volume with a snapshot. Everything written after the snapshot is lost.
 
-1. Turn off auto-sync on the `platform` ArgoCD app (`../root-app-dev.yaml`), then on `postgres` (`../apps/postgres.yaml`).
+1. Turn off auto-sync on the `platform` ArgoCD app (`../root-app-dev.yaml`), then on `postgres` (`../apps/templates/postgres.yaml`).
    ```bash
    kubectl -n argocd patch application platform --type merge -p '{"spec":{"syncPolicy":{"automated":null}}}'
    kubectl -n argocd patch application postgres --type merge -p '{"spec":{"syncPolicy":{"automated":null}}}'

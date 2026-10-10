@@ -1,0 +1,51 @@
+{{- if not .Values.singleton }}
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: {{ include "microservice.fullname" . }}-analysis
+  labels:
+    {{- include "microservice.labels" . | nindent 4 }}
+
+spec:
+  args:
+    - name: canary-hash
+  metrics:
+    # Error rates can't go over 5%
+    - name: error-rate
+      interval: 30s
+      count: 4
+      # As we do not have real users , we don't want it to rollback just becasue it can not report real data,
+      # in a real environment where there are  users , we would change it so that even no data being reported would result in a failure.
+      # So this line underneath=  will count as a fail only when error rates go above 5% which is what we need anyway.
+      successCondition: len(result) == 0 || isNaN(result[0]) || result[0] <= 0.05
+      failureLimit: 0
+      provider:
+        prometheus:
+          address: http://prometheus-kube-prometheus-prometheus.monitoring.svc:9090
+          query: |
+            sum(rate(http_requests_total{namespace="order-platform",job="{{ include "microservice.fullname" . }}",rollouts_pod_template_hash="{{ "{{args.canary-hash}}" }}",status_code=~"5.."}[5m]))
+            /
+            sum(rate(http_requests_total{namespace="order-platform",job="{{ include "microservice.fullname" . }}",rollouts_pod_template_hash="{{ "{{args.canary-hash}}" }}"}[5m]))
+
+
+    #  latency must not exceed 500ms
+    - name: p95-latency
+      interval: 30s
+      count: 4
+      successCondition: len(result) == 0 || isNaN(result[0]) || result[0] <= 0.5
+      failureLimit: 0
+      provider:
+        prometheus:
+          address: http://prometheus-kube-prometheus-prometheus.monitoring.svc:9090
+          query: |
+            histogram_quantile(
+              0.95,
+              sum by (le) (
+                rate(http_request_duration_seconds_bucket{
+                  namespace="order-platform",
+                  job="{{ include "microservice.fullname" . }}",
+                  rollouts_pod_template_hash="{{ "{{args.canary-hash}}" }}"
+                }[5m])
+              )
+            )
+{{- end }}

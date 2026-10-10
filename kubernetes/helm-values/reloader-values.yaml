@@ -3,3 +3,4 @@ reloader:
   # Reloader's recommended setting with GitOps: the env var isn't in git, so ArgoCD
   # (selfHeal) would treat it as drift.
   reloadStrategy: annotations
+  isArgoRollouts: true

@@ -13,7 +13,7 @@ output "repo_secret_name" {
   value       = kubernetes_secret_v1.repo.metadata[0].name
 }
 
-output "root_app_names" {
-  description = "ArgoCD root Applications for dev, staging and prod"
-  value       = [for env, app in local.root_apps : app.metadata.name]
+output "root_app_name" {
+  description = "ArgoCD Application that installs everything in kubernetes/platform/apps"
+  value       = local.root_app.metadata.name
 }

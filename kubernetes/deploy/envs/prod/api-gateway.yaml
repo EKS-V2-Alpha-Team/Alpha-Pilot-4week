@@ -7,7 +7,7 @@ replicaCount: 2
 
 env:
   # Trust forwarded IP headers only from within the VPC.
-  TRUSTED_PROXY_CIDRS: 10.6.0.0/16
+  TRUSTED_PROXY_CIDRS: 10.8.0.0/16
 
 externalSecrets:
   env:

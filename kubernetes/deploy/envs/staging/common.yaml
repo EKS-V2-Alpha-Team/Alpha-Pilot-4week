@@ -1,6 +1,6 @@
 image:
   # Shared ECR repository for all environments.
-  repository: 751501311900.dkr.ecr.eu-west-2.amazonaws.com/eks-v2-dev-ecr
+  repository: 751501311900.dkr.ecr.eu-west-2.amazonaws.com/eks-v2-shared-ecr
 
 env:
   AWS_REGION: eu-west-2

@@ -1,5 +1,5 @@
 # Dev root Application, installed by argocd-bootstrap.
-# Manages the shared platform components and dev services.
+# Manages the dev platform components and services.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

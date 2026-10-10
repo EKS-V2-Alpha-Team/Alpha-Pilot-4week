@@ -24,7 +24,7 @@ spec:
       project: default
       destination:
         server: https://kubernetes.default.svc
-        namespace: order-platform-staging
+        namespace: order-platform
       source:
         repoURL: git@github.com:EKS-V2-Alpha-Team/Alpha-Pilot-4week.git
         targetRevision: main

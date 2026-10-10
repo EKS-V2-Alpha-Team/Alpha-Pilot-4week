@@ -1,5 +1,5 @@
 # notification-service in dev.
 image:
-  tag: notification-service-e21dd59f
+  tag: notification-service-0aedbc78
 
 replicaCount: 1

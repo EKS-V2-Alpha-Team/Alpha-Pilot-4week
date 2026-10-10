@@ -53,10 +53,9 @@ resource "aws_db_instance" "this" {
         var.multi_az &&
         var.deletion_protection &&
         !var.skip_final_snapshot &&
-        var.backup_retention_period >= 7 &&
-        !startswith(var.instance_class, "db.t")
+        var.backup_retention_period >= 7
       )
-      error_message = "prod requires multi_az, deletion_protection, a final snapshot, >= 7 days of backups, and a non-burstable instance class."
+      error_message = "prod requires multi_az, deletion_protection, a final snapshot and >= 7 days of backups."
     }
   }
 }

@@ -280,6 +280,9 @@ func handleProduct(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(p)
 }
 
+// reservationMinutes is how long an order's stock is held while it waits to be paid.
+const reservationMinutes = 15
+
 func handleReserve(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		httpError(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -315,7 +318,11 @@ func handleReserve(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
-	expiresAt := time.Now().Add(15 * time.Minute)
+	// When the hold ends is worked out by the database clock, the same one the scheduler
+	// compares it with (expires_at < NOW()). A Go time here would be written as this
+	// process's wall-clock reading, so a process in another time zone than the database
+	// would make holds expire at once, or hours late.
+	var expiresAt time.Time
 
 	for _, item := range req.Items {
 		// Check available stock with row lock
@@ -343,10 +350,12 @@ func handleReserve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if _, err := tx.Exec(
-			"INSERT INTO reservations (order_id, product_id, quantity, status, expires_at) VALUES ($1, $2, $3, 'active', $4)",
-			req.OrderID, item.ProductID, item.Quantity, expiresAt,
-		); err != nil {
+		var itemExpiry time.Time
+		if err := tx.QueryRow(
+			`INSERT INTO reservations (order_id, product_id, quantity, status, expires_at)
+			 VALUES ($1, $2, $3, 'active', NOW() + make_interval(mins => $4)) RETURNING expires_at`,
+			req.OrderID, item.ProductID, item.Quantity, reservationMinutes,
+		).Scan(&itemExpiry); err != nil {
 			if isUniqueViolation(err) {
 				// A concurrent request for the same order reserved first. Undo ours
 				// (including the reserved increment) and report theirs.
@@ -358,6 +367,9 @@ func handleReserve(w http.ResponseWriter, r *http.Request) {
 			}
 			httpError(w, "reservation insert failed", http.StatusInternalServerError)
 			return
+		}
+		if expiresAt.IsZero() {
+			expiresAt = itemExpiry
 		}
 	}
 
@@ -472,7 +484,8 @@ func handleRelease(w http.ResponseWriter, r *http.Request) {
 
 // handleCommit turns an order's held stock into a sale: stock and reserved both drop by
 // the quantity and the reservation becomes 'committed', which the scheduler never
-// expires. Same claim-then-act pattern as release, so a repeat commits nothing.
+// expires. Same claim-then-act pattern as release, so a repeat commits nothing. An order
+// with no active hold and nothing committed answers 409.
 func handleCommit(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		httpError(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -520,6 +533,24 @@ func handleCommit(w http.ResponseWriter, r *http.Request) {
 	if err := rows.Err(); err != nil {
 		httpError(w, "iteration failed", http.StatusInternalServerError)
 		return
+	}
+
+	if len(items) == 0 {
+		// Nothing active was claimed. A repeat of a commit that already happened is fine (200,
+		// committed 0). But an order whose hold expired, was released or never existed has
+		// not been sold anything: say so (409) instead of reporting a sale that never took
+		// the stock off the shelf. The worker then re-reserves, or cancels and refunds.
+		var committed int
+		if err := tx.QueryRow(
+			"SELECT COUNT(*) FROM reservations WHERE order_id = $1 AND status = 'committed'", req.OrderID,
+		).Scan(&committed); err != nil {
+			httpError(w, "commit failed", http.StatusInternalServerError)
+			return
+		}
+		if committed == 0 {
+			httpError(w, "no active reservation to commit (the hold expired, was released, or was never made)", http.StatusConflict)
+			return
+		}
 	}
 
 	for _, it := range items {

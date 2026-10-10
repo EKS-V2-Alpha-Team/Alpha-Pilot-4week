@@ -22,14 +22,24 @@ resource "aws_iam_role_policy_attachment" "cluster_AmazonEKSClusterPolicy" {
   role       = aws_iam_role.cluster.name
 }
 
+data "aws_caller_identity" "current" {}
+
+locals {
+  # The pipeline installs ArgoCD and runs kubectl from outside the cluster, so its role
+  # (created in bootstrap/) needs cluster admin in every environment.
+  github_actions_role_arn = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.project_name}-${var.environment}-github-actions-role"
+
+  cluster_admin_principal_arns = toset(concat([local.github_actions_role_arn], var.cluster_admin_principal_arns))
+}
+
 resource "aws_eks_access_entry" "cluster_admin" {
-  for_each      = toset(var.cluster_admin_principal_arns)
+  for_each      = local.cluster_admin_principal_arns
   cluster_name  = aws_eks_cluster.this.name
   principal_arn = each.value
 }
 
 resource "aws_eks_access_policy_association" "cluster_admin" {
-  for_each      = toset(var.cluster_admin_principal_arns)
+  for_each      = local.cluster_admin_principal_arns
   cluster_name  = aws_eks_cluster.this.name
   principal_arn = each.value
   policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"

@@ -1,0 +1,25 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: snapscheduler
+  namespace: argocd
+  annotations:
+    # Before postgres (wave -1), which holds the SnapshotSchedule.
+    argocd.argoproj.io/sync-wave: "-3"
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: snapscheduler
+  source:
+    repoURL: https://backube.github.io/helm-charts
+    chart: snapscheduler
+    targetRevision: 3.5.0
+    helm:
+      releaseName: snapscheduler
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

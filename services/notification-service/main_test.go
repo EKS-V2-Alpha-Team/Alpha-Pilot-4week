@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -177,5 +178,29 @@ func TestSendNeedsRecipientAndTemplate(t *testing.T) {
 	code, _ := send(t, map[string]interface{}{"template": "order_confirmed"})
 	if code != http.StatusBadRequest {
 		t.Errorf("got %d, want 400", code)
+	}
+}
+
+// The cancellation email has a template, and it fills in the order's details.
+func TestOrderCancelledTemplateIsSeededAndRenders(t *testing.T) {
+	setupTestDB(t)
+	// Start from a database that has never seen the template, as a fresh one would.
+	if _, err := db.Exec(`DELETE FROM notification_templates WHERE id = 'order_cancelled'`); err != nil {
+		t.Fatal(err)
+	}
+	migrate()
+	code, _ := send(t, map[string]interface{}{
+		"recipient": "sara@example.com", "template": "order_cancelled", "dedupe_key": "order_cancelled:42",
+		"data": map[string]interface{}{"OrderID": 42, "CustomerName": "sara", "Currency": "GBP", "Total": "20.00"},
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("got %d, want 201", code)
+	}
+	var subject, body string
+	if err := db.QueryRow(`SELECT subject, body FROM notifications WHERE template = 'order_cancelled'`).Scan(&subject, &body); err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if subject != "Order Cancelled - #42" || !strings.Contains(body, "GBP 20.00") || !strings.Contains(body, "sara") {
+		t.Errorf("rendered %q / %q", subject, body)
 	}
 }

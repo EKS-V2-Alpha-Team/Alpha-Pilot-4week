@@ -1,10 +1,15 @@
 image:
   # CI pushes all services to this one repo, tagged <service>-<sha>.
-  repository: 751501311900.dkr.ecr.eu-west-2.amazonaws.com/eks-v2-dev-ecr
+  repository: 751501311900.dkr.ecr.eu-west-2.amazonaws.com/eks-v2-shared-ecr
 
 env:
   AWS_REGION: eu-west-2
 
 database:
-  credentialsSecret: eks-v2-dev-db-credentials
-  connectionSecret: eks-v2-dev-db-connection
+  credentialsSecret: eks-v2-dev-db-credentials  # checkov:skip=CKV_SECRET_6: Secrets Manager secret name, not a secret value
+  connectionSecret: eks-v2-dev-db-connection    # checkov:skip=CKV_SECRET_6: Secrets Manager secret name, not a secret value
+  sslMode: disable
+
+metricsPort: 9090
+serviceMonitor:
+  enabled: true

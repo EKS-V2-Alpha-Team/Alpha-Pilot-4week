@@ -168,3 +168,76 @@ func TestConfirmAfterCancelIsStillRejected(t *testing.T) {
 		t.Errorf("status: got %s, want cancelled", s)
 	}
 }
+
+// putStatusExpecting sends PUT /status for order 1 with an expected current status.
+func putStatusExpecting(t *testing.T, status, expected string) int {
+	t.Helper()
+	body := fmt.Sprintf(`{"order_id":1,"new_status":%q,"expected_status":%q}`, status, expected)
+	req := httptest.NewRequest(http.MethodPut, "/status", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+	handleUpdateStatus(rec, req)
+	return rec.Code
+}
+
+// The scheduler saw the order as pending and asks to cancel it. If the worker confirmed
+// it in the meantime, the cancel must be refused: confirmed to cancelled is a valid move
+// on its own, so only the expected status stops it.
+func TestExpectedStatusStopsAChangeToAnOrderThatMovedOn(t *testing.T) {
+	setupTestDB(t)
+	t.Cleanup(func() { db.Close() })
+	if rec := postOrder(t); rec.Code != http.StatusCreated {
+		t.Fatalf("create order: %d", rec.Code)
+	}
+	if code := putStatus(t, "confirmed"); code != http.StatusOK {
+		t.Fatalf("confirm: got %d, want 200", code)
+	}
+
+	if code := putStatusExpecting(t, "cancelled", "pending"); code != http.StatusConflict {
+		t.Fatalf("cancel expecting pending: got %d, want 409", code)
+	}
+
+	if s := orderStatus(t); s != "confirmed" {
+		t.Errorf("status: got %s, want confirmed", s)
+	}
+	if n := count(t, `SELECT count(*) FROM order_outbox WHERE event_type = 'order.status_changed' AND payload->>'new_status' = 'cancelled'`); n != 0 {
+		t.Errorf("cancel events: got %d, want 0", n)
+	}
+}
+
+// When the order is still in the expected status the change goes through as normal.
+func TestExpectedStatusMatchingIsApplied(t *testing.T) {
+	setupTestDB(t)
+	t.Cleanup(func() { db.Close() })
+	if rec := postOrder(t); rec.Code != http.StatusCreated {
+		t.Fatalf("create order: %d", rec.Code)
+	}
+
+	if code := putStatusExpecting(t, "cancelled", "pending"); code != http.StatusOK {
+		t.Fatalf("cancel expecting pending: got %d, want 200", code)
+	}
+
+	if s := orderStatus(t); s != "cancelled" {
+		t.Errorf("status: got %s, want cancelled", s)
+	}
+}
+
+// An order that is already cancelled stays a repeat (200, nothing written), whatever
+// the caller expected. The scheduler may retry after a lost reply.
+func TestExpectedStatusOnAlreadyCancelledOrderIsARepeat(t *testing.T) {
+	setupTestDB(t)
+	t.Cleanup(func() { db.Close() })
+	if rec := postOrder(t); rec.Code != http.StatusCreated {
+		t.Fatalf("create order: %d", rec.Code)
+	}
+	if code := putStatus(t, "cancelled"); code != http.StatusOK {
+		t.Fatalf("cancel: got %d, want 200", code)
+	}
+
+	if code := putStatusExpecting(t, "cancelled", "pending"); code != http.StatusOK {
+		t.Fatalf("repeat cancel: got %d, want 200", code)
+	}
+
+	if n := count(t, `SELECT count(*) FROM order_outbox WHERE event_type = 'order.status_changed'`); n != 1 {
+		t.Errorf("status events: got %d, want 1", n)
+	}
+}

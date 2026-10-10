@@ -52,7 +52,7 @@ resource "aws_secretsmanager_secret" "db_credentials" {
   kms_key_id = aws_kms_key.secret_encryption.arn
 
   # dev only: delete immediately so destroy/apply cycles can reuse the name; prod keeps the default 30-day recovery window
-  recovery_window_in_days = 0
+  recovery_window_in_days = var.environment == "dev" ? 0 : 30
 }
 
 ephemeral "aws_secretsmanager_random_password" "db_password" {
@@ -69,4 +69,25 @@ resource "aws_secretsmanager_secret_version" "db_credentials" {
     password = ephemeral.aws_secretsmanager_random_password.db_password.random_password
   })
   secret_string_wo_version = 1
+}
+
+# creating db host and port connection
+resource "aws_secretsmanager_secret" "db_connection" {
+  count = var.environment == "dev" ? 1 : 0 # will create secret only if using dev envvironment
+
+  name       = "${var.project_name}-${var.environment}-db-connection"
+  kms_key_id = aws_kms_key.secret_encryption.arn
+
+  recovery_window_in_days = 0
+}
+
+resource "aws_secretsmanager_secret_version" "db_connection" {
+  count = var.environment == "dev" ? 1 : 0
+
+  secret_id = aws_secretsmanager_secret.db_connection[0].id
+
+  secret_string = jsonencode({
+    host = "postgres.order-platform.svc.cluster.local"
+    port = 5432
+  })
 }

@@ -3,9 +3,6 @@ component: worker
 containerPort: 8090
 portEnvName: HEALTH_PORT
 
-service:
-  enabled: false
-
 resources:
   requests:
     cpu: 50m

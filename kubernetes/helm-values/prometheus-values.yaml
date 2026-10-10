@@ -41,9 +41,9 @@ grafana:
   resources:
     requests:
       cpu: 100m
-      memory: 128Mi
-    limits:
       memory: 256Mi
+    limits:
+      memory: 512Mi
 
   service:
     type: ClusterIP
@@ -53,8 +53,29 @@ grafana:
     userKey: admin-user
     passwordKey: admin-password
 
+  sidecar:
+    dashboards:
+      # Put each dashboard ConfigMap in the folder named by its grafana_folder annotation
+      folderAnnotation: grafana_folder
+      provider:
+        foldersFromFilesStructure: true
+
 kubeStateMetrics:
   enabled: true
 
 nodeExporter:
   enabled: true
+
+# Only our own alerts (app-alerts). All built-in kube-prometheus-stack rules are off.
+defaultRules:
+  create: false
+
+# EKS manages the control plane: these can't be scraped.
+kubeEtcd:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeProxy:
+  enabled: false

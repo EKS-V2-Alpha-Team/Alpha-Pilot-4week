@@ -1,154 +1,185 @@
-<p align="center">
-  <img src="images/coderco.jpg" alt="CoderCo" width="200"/>
-</p>
+<img src="https://api.iconify.design/octicon/book-16.svg?color=%23808080" width="16" height="16" alt=""> [README](#e-commerce-order-fulfillment-platform) · <img src="https://api.iconify.design/octicon/stack-16.svg?color=%23808080" width="16" height="16" alt=""> [Architecture](ARCHITECTURE.md) · <img src="https://api.iconify.design/octicon/people-16.svg?color=%23808080" width="16" height="16" alt=""> [Contributing](CONTRIBUTING.md) · <img src="https://api.iconify.design/octicon/code-of-conduct-16.svg?color=%23808080" width="16" height="16" alt=""> [Code of conduct](CODE_OF_CONDUCT.md) · <img src="https://api.iconify.design/octicon/law-16.svg?color=%23808080" width="16" height="16" alt=""> [MIT license](#license)
 
-# EKS v2 - Order Fulfillment Platform
+# E-commerce Order Fulfillment Platform
 
-A multi-service order platform on Amazon EKS. Nine services, one cluster, stateful workloads running on Kubernetes. The application code is provided. You build everything else.
+[![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](https://go.dev/) [![Terraform](https://img.shields.io/badge/Terraform-1.16.3-844FBA?logo=terraform&logoColor=white)](https://developer.hashicorp.com/terraform) [![Amazon EKS](https://img.shields.io/badge/Amazon%20EKS-1.35-FF9900)](https://aws.amazon.com/eks/) [![Kubernetes](https://img.shields.io/badge/Kubernetes-1.35-326CE5?logo=kubernetes&logoColor=white)](https://kubernetes.io/) [![Docker](https://img.shields.io/badge/Docker-distroless-2496ED?logo=docker&logoColor=white)](https://www.docker.com/) [![Helm](https://img.shields.io/badge/Helm-4.3.0-0F1689?logo=helm&logoColor=white)](https://helm.sh/) [![Argo CD chart](https://img.shields.io/badge/Argo%20CD%20chart-10.9.6-EF7B4D?logo=argo&logoColor=white)](https://argo-cd.readthedocs.io/) [![Karpenter](https://img.shields.io/badge/Karpenter-1.14-FF9900)](https://karpenter.sh/) [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org/) [![Amazon SQS](https://img.shields.io/badge/Amazon%20SQS-queue-FF4F8B)](https://aws.amazon.com/sqs/) [![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-CI%2FCD-2088FF?logo=githubactions&logoColor=white)](https://github.com/features/actions)
 
----
-
-## Services
-
-| Service | Description |
-|---------|-------------|
-| **api-gateway** | Auth, rate limiting, routes requests to internal services |
-| **order-service** | Order lifecycle and state machine |
-| **inventory-service** | Stock management and reservations |
-| **payment-service** | Payment processing, refunds, ledger |
-| **notification-service** | Email and SMS dispatch |
-| **shipping-service** | Shipments, tracking, carrier webhooks |
-| **worker** | SQS consumer, orchestrates cross-service events |
-| **scheduler** | Cron jobs (expired reservations, abandoned orders, retries) |
-| **dashboard-api** | Admin dashboard UI, analytics and reporting |
-
-Read the source code. Environment variables, endpoints and data models are in the code.
+An e-commerce order fulfillment platform made up of nine Go microservices, deployed to Amazon EKS through IaC, CI/CD and ArgoCD GitOps. Each order flows through an SQS-driven worker that reserves stock, charges payment and confirms the order.
 
 ---
 
-## Your Job
+## Table of Contents
 
-Write the Dockerfiles. Write the Terraform. Write the Kubernetes manifests. Write the CI/CD pipeline. Deploy all nine services to EKS, with PostgreSQL and Redis running in-cluster on persistent volumes.
-
-### Requirements
-
-- EKS (1.33 or above) with managed node groups across 3 AZs
-- Karpenter for node autoscaling. Cluster Autoscaler is fine to compare against, but Karpenter is the default you should be reaching for.
-- Nine Deployments behind a single Ingress with TLS, routed to the right backend
-- PostgreSQL on a StatefulSet with a 20Gi PVC (gp3, encrypted)
-- Redis on a StatefulSet with AOF persistence on a 10Gi PVC (gp3, encrypted)
-- AWS EBS CSI Driver with IRSA, gp3 as the default storage class, a VolumeSnapshotClass configured
-- SQS queue with a dead letter queue as the event bus. If you would rather run in-cluster Kafka via the Strimzi operator, that is also accepted, but you will need to modify the four event-producing services to use Kafka clients. Pick one path, defend it.
-- ECR repositories, one per service
-- VPC with private subnets. Avoid NAT gateways if you can.
-- Secrets sourced from AWS Secrets Manager via External Secrets or the Secrets Store CSI Driver. Not hardcoded, not in env files.
-- Traefik as the Ingress controller, fronted by an AWS NLB. ingress-nginx is retired (no releases, no security fixes after March 2026) so do not pick it. cert-manager with Let's Encrypt for TLS. ExternalDNS managing Route 53 records.
-- GitHub Actions with OIDC. No long-lived AWS credentials.
-- ArgoCD in the cluster, App-of-Apps pattern, auto-sync on the dev overlay
-- Zero-downtime rollouts with rollback on failure
-- Least-privilege IAM with IRSA for every service that touches AWS
-- Terraform with remote state
-- Multi-stage Docker builds
-- Container image scanning before deploy
-
-### Deliverables
-
-- [ ] Dockerfiles, one per service
-- [ ] Terraform for all infrastructure (VPC, EKS, IAM, ECR, SQS, addons)
-- [ ] Kubernetes manifests (Kustomize or Helm)
-- [ ] ArgoCD Applications wiring the cluster to your manifests repo
-- [ ] GitHub Actions pipelines for infra and app, separated
-- [ ] Working deployment with all services healthy and the end-to-end flow functional
-- [ ] Dashboard UI reachable over HTTPS at a real DNS name, connected to all services
-- [ ] README covering the sections below
+1. [Overview](#overview)
+2. [Architecture Diagram](#architecture-diagram)
+3. [Request Flow](#request-flow)
+4. [Deployment Process](#deployment-process)
+5. [Directory Structure](#directory-structure)
+6. [Local Setup](#local-setup)
 
 ---
 
-## What Your README Must Cover
+## Overview
 
-This is not optional. Your README is part of the submission.
+Customers register, log in and place orders through an API gateway. Each new order is published to an SQS queue, where a worker reserves the stock, charges the payment and confirms the order, or releases the stock and cancels the order if any step fails. Supporting services handle shipping and tracking, customer notifications and scheduled jobs such as expiring stale reservations and retrying failed payments. A dashboard API reports order stats, revenue, shipping and low-stock alerts.
 
-**Architecture decisions** - what you built, why you built it that way, what you traded off. Why StatefulSets for Postgres instead of RDS. Why Kustomize over Helm or the other way round.
-
-**Deployment pipeline** - a developer pushes a change to the payment service. Walk through exactly what happens from commit to live traffic. How do app deploys and infra changes stay out of each other's way? What triggers what? Where does ArgoCD fit in that flow?
-
-**Secrets management** - nine services need database credentials, API keys, JWT secrets. How do they get from Secrets Manager into a pod? What happens when you rotate a secret?
-
-**Storage** - Postgres holds the only durable state in the system. How is the PVC backed? Encrypted? Snapshotted? What is your restore procedure and have you actually tested it?
-
-**Scaling strategy** - HPA is enabled for the API gateway, dashboard API, inventory, notification, order, payment and shipping services. These services scale on CPU utilisation with a target of 70%, from a minimum of 2 replicas to a maximum of 5.
-
-The scheduler stays fixed at one replica because it is a singleton service and cannot be used with HPA. The worker also stays fixed for now because it processes SQS messages, where queue depth would be a better scaling signal than CPU utilisation.
-
-metrics-server provides the CPU metrics used by HPA. As load increases, HPA adds pods. If the additional pods cannot fit on the existing nodes, Karpenter can provision another node.
-
-Live scaling will be verified using `kubectl top pods`, HPA scale-up under load and Karpenter node provisioning.
-
-**Database migrations** - seven services share one database. How do schema changes get applied? Job, init container, manual? What about rollback?
+The nine [services](services/) run on an Amazon EKS cluster. Terraform provisions all of the AWS infrastructure with remote state, through GitHub Actions pipelines: a plan on every pull request, then a manual apply of that exact plan. Application changes are delivered through GitOps: the CI pipeline builds, scans and pushes each changed service's image and commits the new image tag to Git, and ArgoCD syncs that change into the cluster, so no pipeline deploys to the cluster directly. Services talk to each other over HTTP and through an SQS event queue, and the dashboard is served over HTTPS, with certificates from cert-manager and DNS records managed by ExternalDNS.
 
 ---
 
-## Things to Consider
+## Architecture Diagram
 
-These are not requirements. They are the kind of problems you will hit in production. How you handle them is up to you.
+![Architecture diagram](images/architecture.png)
 
-- Your Postgres pod gets rescheduled to a different AZ. What happens to its PVC?
-- The worker processes events from SQS. What happens to events that fail three times?
-- The payment service goes down for two minutes. What happens to in-flight orders?
-- You need to add a column to the orders table. The dashboard service reads from that table. How do you deploy both without downtime?
-- A junior dev pushes a bad image for the notification service. How quickly can you roll back without affecting the other eight? Does ArgoCD help or hurt here?
-- Spot instances save money. Which workloads tolerate eviction? Which absolutely cannot?
-- Your logging pipeline ingests from nine services plus the cluster control plane. What does that cost per month? Is there a cheaper way?
-- You rotate the database password. Do all nine deployments restart? Is there a way to avoid that?
-- A single-AZ EBS volume becomes a problem when the AZ goes down. What is your answer?
+1. **Network**: a VPC across three availability zones in `eu-west-2`. The cluster nodes and the database run in private subnets, and only the load balancer is public.
+2. **Edge**: traffic enters through AWS and is routed into the cluster.
+   - **DNS**: Route 53 resolves the domain, and ExternalDNS keeps the record pointed at the load balancer.
+   - **Load balancing**: an AWS Network Load Balancer passes traffic to Traefik, the ingress controller.
+   - **TLS**: cert-manager issues and renews the certificate from Let's Encrypt.
+3. **Services**: the nine Go services run in the `order-platform` namespace.
+   - **Synchronous**: the API gateway is the single entry point and routes HTTP requests to each service.
+   - **Asynchronous**: orders are processed through an Amazon SQS queue, with failed messages moved to a dead-letter queue.
+   - **Data**: PostgreSQL stores orders, inventory and payments.
+4. **Platform**: shared tools that run alongside the services.
+   - **Delivery**: ArgoCD deploys everything from Git.
+   - **Scaling**: Karpenter adds and removes nodes based on demand.
+   - **Secrets**: External Secrets pulls credentials from AWS Secrets Manager.
+   - **Monitoring**: Prometheus and Grafana collect and display metrics.
+
+The reasoning and trade-offs behind these choices are in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
-## Local Development
+## Request Flow
 
-```bash
-docker compose up --build
+![Request flow diagram](images/request-flow.png)
+
+1. **Place an order**: the customer sends `POST /api/orders` with their JWT.
+   - **Edge**: the Network Load Balancer passes the request to Traefik, which terminates TLS with the certificate from cert-manager.
+   - **Gateway**: the API gateway checks the JWT, rate limits per user in Redis and forwards the request to order-service.
+   - **Save**: order-service saves the order as `pending` and its `order.created` event in one PostgreSQL transaction, then returns `201 Created` with the order ID.
+2. **Outbox relay**: a background loop in order-service sends saved events to SQS and marks them as sent. If SQS is down, the events wait and are retried, so no order is lost.
+3. **Fulfil the order**: the worker picks up the event from SQS and first checks the order's status, so a repeated message never redoes a finished step.
+   - **Success**: it reserves the stock, charges the payment, confirms the order, commits the stock and deletes the message.
+   - **Out of stock or card declined**: it releases the stock, cancels the order and deletes the message.
+   - **Error or timeout**: the message is not deleted, so SQS retries it and moves it to the dead-letter queue after three attempts.
+4. **Check the order**: the customer calls `GET /api/orders/{id}` through the gateway to see whether the order is pending, confirmed or cancelled.
+
+---
+
+## Deployment Process
+
+![Deployment sequence diagram](images/deployment-sequence.png)
+
+1. **Containerise**: each service has a multi-stage Dockerfile. Go builds a static binary in the first stage, which is copied into a minimal distroless image that runs as a non-root user.
+2. **Pull request checks**: each pull request runs only the pipelines for the code it changes.
+   - **Services**: `go vet`, `go test -race`, `docker build` and a Trivy image scan that fails on HIGH or CRITICAL vulnerabilities.
+   - **Helm**: `helm lint`, then every service is rendered and the manifests are validated against Kubernetes schemas with kubeconform.
+   - **Terraform**: `fmt`, `validate`, a Checkov security scan and a `terraform plan` for dev, staging and prod, each posted as a comment on the pull request. Pull requests use a read-only AWS role, so they can't change anything.
+3. **Provision infrastructure**: Terraform Apply is started manually for one environment and applies a saved plan. Staging and prod only accept a plan made by a manual Terraform Plan run on `main`, and prod waits for an approval from someone who didn't start the run. Pipelines sign in to AWS through GitHub OIDC with a role per environment, so no AWS keys are stored.
+4. **Release images**: on merge to `main`, each changed service's image is pushed to ECR, tagged with the commit SHA. The pipeline then commits the new tag to the dev values file in Git.
+5. **Deploy with GitOps**: ArgoCD sees the new tag in Git and rolls it out with a rolling update. No pipeline deploys to the cluster directly, and a rollback is a revert of the tag commit.
+6. **Tear down**: Terraform Destroy asks for the environment and for its name typed again. Prod also waits for an approval, and its database has deletion protection on, so turn that off with an apply first.
+
+---
+
+## Directory Structure
+
+```
+Alpha-Pilot-4week/
+│
+├── .github/
+│   └── workflows/
+│
+├── bootstrap/
+│
+├── images/
+│
+├── infra/
+│   ├── terraform/
+│   ├── argocd-bootstrap/
+│   └── kind/
+│
+├── kubernetes/
+│   ├── charts/
+│   ├── deploy/
+│   ├── helm-values/
+│   └── platform/
+│
+├── scripts/
+│
+├── services/
+│
+├── docker-compose.yml
+└── Makefile
 ```
 
 ---
 
-## Advanced
+## Local Setup
 
-Not required for submission. These will set your project apart.
+### Prerequisites
 
-**Observability**. It is 2am. Orders are failing. You are on call. You need to answer four questions fast: which service is the problem, when did it start, what changed, who is affected. If your setup cannot answer those in under 10 minutes without `kubectl exec`, it is not production-ready. kube-prometheus-stack gives you the building blocks. RED metrics for the API layer. Saturation metrics for the data layer. Dashboards grouped by service, not by pod. Alerts that mean something. A way to follow one order across all nine services.
+- AWS CLI v2, signed in to the AWS account
+- Terraform >= 1.16
+- kubectl
+- Helm
+- Docker
 
-**Service mesh**. Istio or Linkerd. mTLS between every service. Authorization policies that block lateral movement. Traffic shifting for canary releases.
+### 1. Bootstrap Remote State, ECR & DNS
 
-**Distributed tracing with OpenTelemetry**. Run an OTel collector. Instrument the Go services (the SDK is small). Send spans to Tempo or Jaeger. Follow a single order across api-gateway, order-service, payment-service, shipping-service and worker. This is the bit that pays you back at 2am.
+Before provisioning infrastructure, run the bootstrap. It creates the S3 buckets for remote state, the ECR repository, the Route 53 hosted zone, and the GitHub Actions OIDC provider with its roles: one per environment, a read-only plan role and an image push role.
 
-**Gateway API instead of Ingress**. Traefik supports Gateway API CRDs (GatewayClass, Gateway, HTTPRoute). The Kubernetes community is moving in this direction now that ingress-nginx is gone. Build the platform with Gateway resources instead of `Ingress`.
+```bash
+terraform -chdir=bootstrap init
+terraform -chdir=bootstrap apply
+```
 
-**Backup and disaster recovery**. Velero for cluster-level backup. EBS snapshots on a schedule. Restore in a fresh cluster and prove the application comes back up with its data intact.
+Copy the role ARNs from `terraform -chdir=bootstrap output` into GitHub:
 
-**Chaos drill**. Kill a Postgres pod live during your demo. Watch the StatefulSet bring it back. Watch the application recover. One concrete drill, not a chaos platform.
+- `AWS_ROLE_ARN` on each of the `dev`, `staging` and `prod` environments, with the matching role.
+- `AWS_PLAN_ROLE_ARN`, `AWS_ECR_ROLE_ARN` and `PROD_APPROVERS` (GitHub usernames, comma-separated) as repository variables.
+- On each environment, set deployment branches to `main` only.
+
+Then delegate the subdomain by adding the hosted zone's four name servers as `NS` records in Cloudflare (see [kubernetes/README.md](kubernetes/README.md#dns-one-off)).
+
+### 2. Add the ArgoCD Deploy Key
+
+Create a read-only GitHub deploy key so ArgoCD can read this private repository. Store the private key in Secrets Manager, and add the public key under the repo's **Settings → Deploy keys**.
+
+```bash
+aws secretsmanager create-secret --name eks-v2-dev-argocd-deploy-key --secret-string file://<path-to-private-key>
+```
+
+### 3. Provision Infrastructure
+
+In GitHub Actions, run **Terraform Plan** on `main` for the environment, then **Terraform Apply** with the same environment and the plan's run ID.
+
+### 4. Bootstrap ArgoCD
+
+Run **ArgoCD Bootstrap** (dev only for now) with the run ID left empty to plan, then again with that plan's run ID to apply. ArgoCD then installs the platform tools and all nine services, and the pipeline waits until every application is healthy.
+
+### 5. Configure kubectl
+
+Your IAM role needs an EKS access entry on the cluster.
+
+```bash
+aws eks update-kubeconfig --region eu-west-2 --name eks-v2-dev-cluster
+kubectl -n argocd get applications
+```
+
+### 6. Run the App Locally
+
+```bash
+docker compose up --build
+# API gateway: http://localhost:8080
+# Dashboard:   http://localhost:8086
+```
+
+`make help` lists shortcuts for starting, stopping, testing and linting the services.
 
 ---
 
-## Grading
+## License
 
-- All nine services running and healthy on EKS
-- End-to-end flow works through the dashboard UI (create order -> reserve inventory -> process payment -> ship -> deliver)
-- Postgres and Redis on StatefulSets with persistent volumes that survive pod restarts
-- Volume snapshot taken and restored successfully
-- Application reachable over HTTPS at a real DNS name
-- Pipeline deploys only what changed
-- Secrets not hardcoded anywhere
-- No long-lived AWS credentials
-- README covers all required sections with real decisions, not filler
-- You can explain every resource you created
-
-**Tear down when done.** EKS, EBS, NLB and data transfer add up fast.
-
-Everything else is on you. Good luck.
-
----
-
-## Found a bug?
-
-The services have rough edges (see the audit notes in the team review channel). If you spot a real bug, open a PR against this repo. Include screenshots of the bug reproducing, your fix, and the same scenario working after the fix. The CoderCo team will review it. Good fixes stand out at grading time.
+This project is licensed under the MIT License. You are free to use, copy, modify and distribute it, provided the copyright notice and permission notice are included. The software is provided "as is", without warranty of any kind.

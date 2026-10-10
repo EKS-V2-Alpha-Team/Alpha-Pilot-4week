@@ -2,6 +2,17 @@ name: Terraform Plan
 
 on:
   workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to plan"
+        required: true
+        type: choice
+        default: all
+        options:
+          - all
+          - dev
+          - staging
+          - prod
   pull_request:
     branches:
       - main
@@ -16,30 +27,39 @@ permissions:
 
 jobs:
   terraform-plan:
-    name: Run Terraform Plan
+    name: Run Terraform Plan (${{ matrix.environment }})
     # Manual runs only from main
     if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
+    strategy:
+      fail-fast: false # one environment failing doesn't cancel the others
+      matrix:
+        environment: ${{ fromJSON(inputs.environment && inputs.environment != 'all' && format('["{0}"]', inputs.environment) || '["dev","staging","prod"]') }}
+
+    concurrency:
+      group: terraform-plan-${{ matrix.environment }}-${{ github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
     defaults:
       run:
-        working-directory: ./infra/terraform
+        working-directory: ./infra/terraform/environments/${{ matrix.environment }}
 
     env:
       TF_VERSION: "1.16.3"
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Configure AWS credentials w/ OIDC
         uses: aws-actions/configure-aws-credentials@v6
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4
         with:
           terraform_version: ${{ env.TF_VERSION }}
 
@@ -49,9 +69,10 @@ jobs:
           terraform init
 
       - name: Terraform Format
+        if: matrix.environment == 'dev' # check all code once, not three times
         run: |
           echo "Running terraform fmt check..."
-          terraform fmt -check -recursive
+          terraform fmt -check -recursive ../..
 
       - name: Terraform Validate
         run: |
@@ -59,6 +80,7 @@ jobs:
           terraform validate
 
       - name: Run checkov
+        if: matrix.environment == 'dev' # scans the whole repo, so once is enough
         uses: bridgecrewio/checkov-action@v12
         continue-on-error: true
         with:
@@ -73,26 +95,29 @@ jobs:
       - name: Upload plan artifact
         uses: actions/upload-artifact@v7
         with:
-          name: tfplan
-          path: infra/terraform/tfplan.binary
+          name: tfplan-${{ matrix.environment }}
+          path: |
+            infra/terraform/environments/${{ matrix.environment }}/tfplan.binary
+            infra/terraform/environments/${{ matrix.environment }}/.terraform.lock.hcl
+          include-hidden-files: true
           retention-days: 5
 
       - name: Post plan comment
         if: github.event_name == 'pull_request'
-        uses: borchero/terraform-plan-comment@v2
+        uses: borchero/terraform-plan-comment@f585438eda2fa77c6f275994b92aeccd86ef3542 # v3
         with:
           token: ${{ github.token }}
           planfile: tfplan.binary
-          working-directory: ./infra/terraform
-          header: terraform plan
+          working-directory: ./infra/terraform/environments/${{ matrix.environment }}
+          header: terraform plan (${{ matrix.environment }})
 
       - name: Add plan to run summary
         if: github.event_name == 'workflow_dispatch'
         run: |
           echo "Writing the plan to the run summary..."
           {
-            echo "## Terraform plan"
-            echo "To apply, run the Terraform Apply workflow with terraform_plan_run_id=${{ github.run_id }}"
+            echo "## Terraform plan (${{ matrix.environment }})"
+            echo "To apply, run the Terraform Apply workflow with environment=${{ matrix.environment }} and terraform_plan_run_id=${{ github.run_id }}"
             echo '```'
             terraform show -no-color tfplan.binary
             echo '```'

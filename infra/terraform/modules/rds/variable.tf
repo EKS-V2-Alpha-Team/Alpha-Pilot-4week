@@ -49,7 +49,6 @@ variable "allow_major_version_upgrade" {
 variable "apply_immediately" {
   description = "false = changes wait for the maintenance window (prod). true = apply now (dev)."
   type        = bool
-  default     = false
 }
 
 variable "maintenance_window" {
@@ -61,7 +60,6 @@ variable "maintenance_window" {
 variable "instance_class" {
   description = "RDS instance class."
   type        = string
-  default     = "db.t4g.medium"
 }
 
 variable "allocated_storage" {
@@ -95,13 +93,11 @@ variable "master_password_version" {
 variable "multi_az" {
   description = "Synchronous standby in a second AZ with automatic failover."
   type        = bool
-  default     = false
 }
 
 variable "backup_retention_period" {
   description = "Days of automated backups / point-in-time recovery. 0 would disable backups entirely, so it is blocked."
   type        = number
-  default     = 14
 }
 
 variable "backup_window" {
@@ -113,19 +109,16 @@ variable "backup_window" {
 variable "deletion_protection" {
   description = "Blocks deletion via API/console/Terraform."
   type        = bool
-  default     = false
 }
 
 variable "delete_automated_backups" {
   description = "true = automated backups are deleted with the instance (dev). false = kept until retention expires (prod)."
   type        = bool
-  default     = true
 }
 
 variable "skip_final_snapshot" {
-  description = "a final snapshot is taken on deletion."
+  description = "true = no snapshot on deletion (staging). false = final snapshot taken (prod)"
   type        = bool
-  default     = true
 }
 
 variable "performance_insights_enabled" {

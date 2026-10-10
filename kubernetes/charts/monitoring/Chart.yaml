@@ -1,0 +1,4 @@
+apiVersion: v2
+name: monitoring
+description: Order Platform Grafana dashboards and Prometheus alert rules for kube-prometheus-stack
+version: 0.1.0

@@ -3,6 +3,14 @@ name: Terraform Apply
 on:
   workflow_dispatch:
     inputs:
+      environment:
+        description: "Environment to apply to"
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
       terraform_plan_run_id:
         description: "Run ID of the Terraform plan to apply"
         required: true
@@ -10,7 +18,7 @@ on:
 
 env:
     AWS_REGION: ${{ vars.AWS_REGION }}
-    TF_WORKING_DIR: infra/terraform
+    TF_WORKING_DIR: infra/terraform/environments/${{ inputs.environment }}
     TF_VERSION: "1.16.3"
 
 permissions:
@@ -19,8 +27,34 @@ permissions:
   actions: read
 
 jobs:
-    terraform-apply:
+    approve:
+        name: Approve prod apply
+        if: inputs.environment == 'prod'
         runs-on: ubuntu-latest
+        timeout-minutes: 60
+        permissions:
+            issues: write
+        steps:
+         - name: Wait for approval
+           uses: trstringer/manual-approval@fa642940caf8412403569b28b2db4a1df08a83a3 # v1.13.1
+           with:
+             secret: ${{ github.token }}
+             approvers: ${{ vars.PROD_APPROVERS }}
+             minimum-approvals: 1
+             exclude-workflow-initiator-as-approver: true
+             issue-title: "Approve Terraform Apply to prod (plan run ${{ inputs.terraform_plan_run_id }})"
+             issue-body: "Started by @${{ github.actor }}. Read the plan in run ${{ inputs.terraform_plan_run_id }}, then comment approve or deny."
+
+    terraform-apply:
+        name: Terraform Apply (${{ inputs.environment }})
+        needs: approve
+        if: ${{ !cancelled() && (needs.approve.result == 'success' || needs.approve.result == 'skipped') }}
+        runs-on: ubuntu-latest
+        environment: ${{ inputs.environment }}
+
+        concurrency:
+            group: terraform-${{ inputs.environment }}
+            cancel-in-progress: false
 
         defaults:
             run:
@@ -30,27 +64,42 @@ jobs:
          - name: Checkout repository
            uses: actions/checkout@v7
 
+         - name: Check the plan was made on main
+           if: inputs.environment != 'dev'
+           env:
+             GH_TOKEN: ${{ github.token }}
+             PLAN_RUN_ID: ${{ inputs.terraform_plan_run_id }}
+           run: |
+             [[ "$PLAN_RUN_ID" =~ ^[0-9]+$ ]] || { echo "::error::terraform_plan_run_id must be a number"; exit 1; }
+             run=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${PLAN_RUN_ID}" \
+               --jq '[.path, .event, .head_branch, .conclusion] | join(" ")')
+             echo "Plan run ${PLAN_RUN_ID}: ${run}"
+             if [ "$run" != ".github/workflows/terraform-plan.yaml workflow_dispatch main success" ]; then
+               echo "::error::staging and prod only apply a successful Terraform Plan run started manually on main"
+               exit 1
+             fi
+
          - name: Configure AWS credentials
            uses: aws-actions/configure-aws-credentials@v6
            with:
              aws-region: ${{ env.AWS_REGION }}
-             role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+             role-to-assume: ${{ vars.AWS_ROLE_ARN }}
 
          - name: Setup Terraform
            uses: hashicorp/setup-terraform@v4
            with:
               terraform_version: ${{ env.TF_VERSION }}
 
+         - name: Download Terraform Plan
+           uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+           with:
+              name: tfplan-${{ inputs.environment }}
+              run-id: ${{ inputs.terraform_plan_run_id }}
+              path: ${{ env.TF_WORKING_DIR }}
+              github-token: ${{ secrets.GITHUB_TOKEN }}
+
          - name: Initialize Terraform
            run: terraform init
-
-         - name: Download Terraform Plan
-           uses: actions/download-artifact@v7
-           with:
-              name: tfplan
-              run-id: ${{ inputs.terraform_plan_run_id }}
-              path: infra/terraform
-              github-token: ${{ secrets.GITHUB_TOKEN }}
 
          - name: Terraform Apply
            run: terraform apply tfplan.binary

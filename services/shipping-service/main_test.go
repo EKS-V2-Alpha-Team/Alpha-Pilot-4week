@@ -247,3 +247,104 @@ func TestConcurrentMovesRecordOneEvent(t *testing.T) {
 		t.Errorf("%d in_transit events, want 1", n)
 	}
 }
+
+// --- Carrier webhook (open to the internet through the gateway) ---
+
+func webhook(t *testing.T, body string) (int, map[string]interface{}) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	handleCarrierWebhook(rec, httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewBufferString(body)))
+	var resp map[string]interface{}
+	json.NewDecoder(rec.Body).Decode(&resp)
+	return rec.Code, resp
+}
+
+func trackingOf(t *testing.T, orderID int) string {
+	t.Helper()
+	var tn string
+	if err := db.QueryRow(`SELECT tracking_number FROM shipments WHERE order_id = $1`, orderID).Scan(&tn); err != nil {
+		t.Fatalf("tracking: %v", err)
+	}
+	return tn
+}
+
+func TestWebhookMovesShipmentForward(t *testing.T) {
+	setupTestDB(t)
+	createFor(t, 42)
+	tn := trackingOf(t, 42)
+
+	if code, _ := webhook(t, `{"tracking_number":"`+tn+`","status":"in_transit","location":"Leeds hub"}`); code != http.StatusOK {
+		t.Fatalf("in_transit: got %d", code)
+	}
+	if code, _ := webhook(t, `{"tracking_number":"`+tn+`","status":"delivered"}`); code != http.StatusOK {
+		t.Fatalf("delivered: got %d", code)
+	}
+	if s := statusOf(t, 42); s != "delivered" {
+		t.Errorf("status: got %s, want delivered", s)
+	}
+	var loc string
+	db.QueryRow(`SELECT location FROM tracking_events e JOIN shipments s ON s.id = e.shipment_id WHERE s.order_id = 42 AND e.status = 'in_transit'`).Scan(&loc)
+	if loc != "Leeds hub" {
+		t.Errorf("location: got %q, want the carrier's Leeds hub", loc)
+	}
+}
+
+// Anyone can reach the webhook, so a made-up status must not be written to the database
+// or published as a "shipment.<anything>" event.
+func TestWebhookRejectsStatusesACarrierCannotSend(t *testing.T) {
+	setupTestDB(t)
+	createFor(t, 42)
+	tn := trackingOf(t, 42)
+
+	for _, status := range []string{"cancelled", "label_created", "hacked", "", "delivered; DROP TABLE shipments"} {
+		body, _ := json.Marshal(map[string]string{"tracking_number": tn, "status": status})
+		if code, _ := webhook(t, string(body)); code != http.StatusBadRequest {
+			t.Errorf("status %q: got %d, want 400", status, code)
+		}
+	}
+	if s := statusOf(t, 42); s != "label_created" {
+		t.Errorf("status changed to %q", s)
+	}
+	if n := eventCount(t, 42, "hacked"); n != 0 {
+		t.Errorf("a made-up status reached tracking_events")
+	}
+}
+
+func TestWebhookNeedsAKnownTrackingNumber(t *testing.T) {
+	setupTestDB(t)
+	createFor(t, 42)
+	if code, _ := webhook(t, `{"status":"delivered"}`); code != http.StatusBadRequest {
+		t.Errorf("no tracking number: got %d, want 400", code)
+	}
+	if code, _ := webhook(t, `{"tracking_number":"NOPE","status":"delivered"}`); code != http.StatusNotFound {
+		t.Errorf("unknown tracking number: got %d, want 404", code)
+	}
+	if s := statusOf(t, 42); s != "label_created" {
+		t.Errorf("status changed to %q", s)
+	}
+}
+
+// A carrier retries and sends events late. A repeat, or an old "in_transit" after "delivered",
+// changes nothing; and a shipment we cancelled cannot be brought back by the carrier.
+func TestWebhookIsSafeToRepeatAndNeverMovesBackwards(t *testing.T) {
+	setupTestDB(t)
+	createFor(t, 42)
+	tn := trackingOf(t, 42)
+	webhook(t, `{"tracking_number":"`+tn+`","status":"delivered"}`)
+	webhook(t, `{"tracking_number":"`+tn+`","status":"delivered"}`)
+	webhook(t, `{"tracking_number":"`+tn+`","status":"in_transit"}`)
+	if s := statusOf(t, 42); s != "delivered" {
+		t.Errorf("status: got %s, want delivered", s)
+	}
+	if n := eventCount(t, 42, "delivered"); n != 1 {
+		t.Errorf("delivered events: got %d, want 1", n)
+	}
+
+	createFor(t, 43)
+	tn2 := trackingOf(t, 43)
+	moveTo(t, 43, "cancelled")
+	webhook(t, `{"tracking_number":"`+tn2+`","status":"in_transit"}`)
+	if s := statusOf(t, 43); s != "cancelled" {
+		t.Errorf("a cancelled shipment became %s", s)
+	}
+}

@@ -171,6 +171,18 @@ func migrate() {
 			last_error TEXT
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_order_outbox_unsent ON order_outbox(id) WHERE sent_at IS NULL`,
+		// Idempotency keys for POST /orders (see idempotency.go). The primary key is the
+		// guard: one key per customer. order_id is only empty inside the transaction that
+		// claims the key; a committed row always has it. The scheduler prunes old rows.
+		`CREATE TABLE IF NOT EXISTS idempotency_keys (
+			customer_id VARCHAR(255) NOT NULL,
+			key VARCHAR(255) NOT NULL,
+			request_hash CHAR(64) NOT NULL,
+			order_id INTEGER REFERENCES orders(id),
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			PRIMARY KEY (customer_id, key)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_idempotency_keys_created ON idempotency_keys(created_at)`,
 	}
 	for _, m := range migrations {
 		if _, err := db.Exec(m); err != nil {
@@ -215,6 +227,17 @@ func createOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Every order needs a key so a retried request cannot create a second order.
+	idemKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if idemKey == "" {
+		httpError(w, "Idempotency-Key header is required", http.StatusBadRequest)
+		return
+	}
+	if len(idemKey) > maxIdempotencyKeyLen {
+		httpError(w, "Idempotency-Key is too long (255 characters at most)", http.StatusBadRequest)
+		return
+	}
+
 	var req CreateOrderRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpError(w, "invalid request body", http.StatusBadRequest)
@@ -223,6 +246,18 @@ func createOrder(w http.ResponseWriter, r *http.Request) {
 
 	if len(req.Items) == 0 {
 		httpError(w, "order must have at least one item", http.StatusBadRequest)
+		return
+	}
+
+	currency := req.Currency
+	if currency == "" {
+		currency = "GBP"
+	}
+
+	// A key we have already seen is answered from what we stored, before pricing, so a
+	// retry still works while inventory is down.
+	fingerprint := requestFingerprint(req.Items, currency, req.Notes)
+	if replayIfSeen(w, customerID, idemKey, fingerprint) {
 		return
 	}
 
@@ -241,11 +276,6 @@ func createOrder(w http.ResponseWriter, r *http.Request) {
 	}
 	total = roundMoney(total) // 3 x 79.99 is 239.96999999999997 as a float
 
-	currency := req.Currency
-	if currency == "" {
-		currency = "GBP"
-	}
-
 	itemsJSON, _ := json.Marshal(req.Items)
 
 	// One transaction: the order, its history row and its outbox event are saved
@@ -258,6 +288,27 @@ func createOrder(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
+	// Claim the key first. If another request holds it, this INSERT waits until that
+	// transaction finishes: if it committed we get 0 rows and answer with its order,
+	// if it rolled back the key is free and we carry on.
+	claim, err := tx.Exec(
+		`INSERT INTO idempotency_keys (customer_id, key, request_hash)
+		 VALUES ($1, $2, $3) ON CONFLICT (customer_id, key) DO NOTHING`,
+		customerID, idemKey, fingerprint,
+	)
+	if err != nil {
+		log.Printf("Create order error: claim key: %v", err)
+		httpError(w, "failed to create order", http.StatusInternalServerError)
+		return
+	}
+	if n, _ := claim.RowsAffected(); n == 0 {
+		tx.Rollback() // release the connection before looking the order up
+		if !replayIfSeen(w, customerID, idemKey, fingerprint) {
+			httpError(w, "request with this Idempotency-Key is still in progress; retry shortly", http.StatusConflict)
+		}
+		return
+	}
+
 	var orderID int
 	err = tx.QueryRow(
 		`INSERT INTO orders (customer_id, status, items, total, currency, notes)
@@ -266,6 +317,15 @@ func createOrder(w http.ResponseWriter, r *http.Request) {
 	).Scan(&orderID)
 	if err != nil {
 		log.Printf("Create order error: %v", err)
+		httpError(w, "failed to create order", http.StatusInternalServerError)
+		return
+	}
+
+	if _, err := tx.Exec(
+		`UPDATE idempotency_keys SET order_id = $3 WHERE customer_id = $1 AND key = $2`,
+		customerID, idemKey, orderID,
+	); err != nil {
+		log.Printf("Create order error: save key: %v", err)
 		httpError(w, "failed to create order", http.StatusInternalServerError)
 		return
 	}
@@ -379,6 +439,10 @@ func handleUpdateStatus(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		OrderID   int    `json:"order_id"`
 		NewStatus string `json:"new_status"`
+		// ExpectedStatus is optional. A caller that decided based on the order's status
+		// (the scheduler cancels orders it saw as "pending") sends it, so the change only
+		// applies if the order is still in that status.
+		ExpectedStatus string `json:"expected_status"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpError(w, "invalid request body", http.StatusBadRequest)
@@ -397,6 +461,13 @@ func handleUpdateStatus(w http.ResponseWriter, r *http.Request) {
 	// SQS message), not a conflict. Answer 200 and change nothing.
 	if currentStatus == req.NewStatus {
 		writeStatusChange(w, req.OrderID, currentStatus, req.NewStatus, false)
+		return
+	}
+
+	// The caller saw a different status than the order has now, so what it decided no
+	// longer holds. Refuse rather than apply it to an order that has moved on.
+	if req.ExpectedStatus != "" && req.ExpectedStatus != currentStatus {
+		httpError(w, fmt.Sprintf("order is %s, expected %s", currentStatus, req.ExpectedStatus), http.StatusConflict)
 		return
 	}
 

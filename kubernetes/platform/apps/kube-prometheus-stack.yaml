@@ -21,6 +21,9 @@ spec:
     - repoURL: git@github.com:EKS-V2-Alpha-Team/Alpha-Pilot-4week.git
       targetRevision: main
       ref: values
+    - repoURL: git@github.com:EKS-V2-Alpha-Team/Alpha-Pilot-4week.git
+      targetRevision: main
+      path: kubernetes/charts/monitoring
   syncPolicy:
     automated:
       prune: true

@@ -1,6 +1,6 @@
 # dashboard-api in staging.
 image:
-  tag: dashboard-api-68fc760e
+  tag: dashboard-api-0aedbc78
 
 replicaCount: 1
 

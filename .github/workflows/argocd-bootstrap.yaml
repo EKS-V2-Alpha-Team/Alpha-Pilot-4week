@@ -8,7 +8,7 @@ on:
       - main
     paths:
       - "infra/argocd-bootstrap/**"
-      - "kubernetes/platform/root-app.yaml"
+      - "kubernetes/platform/root-app-*.yaml"
       - "kubernetes/helm-values/argocd-values.yaml"
       - ".github/workflows/argocd-bootstrap.yaml"
   workflow_dispatch:

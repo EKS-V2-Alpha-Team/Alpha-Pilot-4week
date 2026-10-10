@@ -9,3 +9,6 @@ database:
   credentialsSecret: eks-v2-staging-db-credentials
   connectionSecret: eks-v2-staging-db-connection
 
+metricsPort: 9090
+serviceMonitor:
+  enabled: true

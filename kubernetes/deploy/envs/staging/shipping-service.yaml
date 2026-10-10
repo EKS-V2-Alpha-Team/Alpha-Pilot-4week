@@ -1,6 +1,6 @@
 # shipping-service in staging.
 image:
-  tag: shipping-service-68fc760e
+  tag: shipping-service-0aedbc78
 
 replicaCount: 1
 

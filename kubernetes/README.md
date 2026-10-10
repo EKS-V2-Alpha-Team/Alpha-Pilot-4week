@@ -5,7 +5,7 @@ Cluster tools the apps depend on. ArgoCD is installed once by hand; ArgoCD insta
 | Path                                               | What                                                                                              |
 | -------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | `helmfile.yaml` + `helm-values/argocd-values.yaml` | ArgoCD, installed by hand once                                                                    |
-| `platform/root-app.yaml`                           | Root app, applied by hand once; points at `platform/apps/`                                        |
+| `platform/root-app-<env>.yaml`                     | Root app per environment, installed by `infra/argocd-bootstrap`. Dev points at `platform/apps/`; staging and prod at `platform/envs/<env>/` |
 | `platform/apps/`                                   | One ArgoCD Application per tool: upstream chart at a pinned version + our values file             |
 | `platform/manifests/`                              | Our own cluster resources (ClusterIssuers, ClusterSecretStore, Karpenter EC2NodeClass + NodePool, `order-platform` namespace, default gp3 StorageClass, default `ebs-csi` VolumeSnapshotClass) |
 | `platform/apps/`                                   | One ArgoCD Application per tool (pinned chart + our values), plus the services ApplicationSet     |
@@ -80,7 +80,7 @@ kubectl -n argocd create secret generic alpha-repo \
 kubectl -n argocd label secret alpha-repo argocd.argoproj.io/secret-type=repository
 
 # 3. Hand over to ArgoCD
-kubectl apply -f kubernetes/platform/root-app.yaml
+kubectl apply -f kubernetes/platform/root-app-dev.yaml
 kubectl -n argocd get applications -w
 ```
 

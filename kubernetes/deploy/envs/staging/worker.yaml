@@ -1,6 +1,6 @@
 # worker in staging.
 image:
-  tag: worker-68fc760e
+  tag: worker-0aedbc78
 
 replicaCount: 1
 

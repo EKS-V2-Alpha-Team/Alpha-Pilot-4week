@@ -109,7 +109,7 @@ kubectl -n order-platform delete pod/postgres-restore-test pvc/postgres-restore-
 
 Replaces the live volume with a snapshot. Everything written after the snapshot is lost.
 
-1. Turn off auto-sync on the `platform` ArgoCD app (`../root-app.yaml`), then on `postgres` (`../apps/postgres.yaml`).
+1. Turn off auto-sync on the `platform` ArgoCD app (`../root-app-dev.yaml`), then on `postgres` (`../apps/postgres.yaml`).
    ```bash
    kubectl -n argocd patch application platform --type merge -p '{"spec":{"syncPolicy":{"automated":null}}}'
    kubectl -n argocd patch application postgres --type merge -p '{"spec":{"syncPolicy":{"automated":null}}}'

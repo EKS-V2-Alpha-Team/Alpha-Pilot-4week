@@ -96,7 +96,10 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: tfplan-${{ matrix.environment }}
-          path: infra/terraform/environments/${{ matrix.environment }}/tfplan.binary
+          path: |
+            infra/terraform/environments/${{ matrix.environment }}/tfplan.binary
+            infra/terraform/environments/${{ matrix.environment }}/.terraform.lock.hcl
+          include-hidden-files: true
           retention-days: 5
 
       - name: Post plan comment

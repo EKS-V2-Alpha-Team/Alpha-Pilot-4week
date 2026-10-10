@@ -84,7 +84,10 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: tfplan-destroy-${{ inputs.environment || 'dev' }}
-          path: ${{ env.TF_WORKING_DIR }}/destroy.tfplan
+          path: |
+            ${{ env.TF_WORKING_DIR }}/destroy.tfplan
+            ${{ env.TF_WORKING_DIR }}/.terraform.lock.hcl
+          include-hidden-files: true
           retention-days: 5
 
       - name: Post destroy plan comment
@@ -163,16 +166,16 @@ jobs:
         with:
           terraform_version: ${{ env.TF_VERSION }}
 
-      - name: Initialize Terraform
-        run: |
-          echo "Initialising terraform..."
-          terraform init -input=false
-
       - name: Download destroy plan
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: tfplan-destroy-${{ inputs.environment || 'dev' }}
           path: ${{ env.TF_WORKING_DIR }}
+
+      - name: Initialize Terraform
+        run: |
+          echo "Initialising terraform..."
+          terraform init -input=false
 
       - name: Terraform Destroy
         run: |

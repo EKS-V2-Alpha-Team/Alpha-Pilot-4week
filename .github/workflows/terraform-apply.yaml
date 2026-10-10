@@ -90,9 +90,6 @@ jobs:
            with:
               terraform_version: ${{ env.TF_VERSION }}
 
-         - name: Initialize Terraform
-           run: terraform init
-
          - name: Download Terraform Plan
            uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
            with:
@@ -100,6 +97,9 @@ jobs:
               run-id: ${{ inputs.terraform_plan_run_id }}
               path: ${{ env.TF_WORKING_DIR }}
               github-token: ${{ secrets.GITHUB_TOKEN }}
+
+         - name: Initialize Terraform
+           run: terraform init
 
          - name: Terraform Apply
            run: terraform apply tfplan.binary

@@ -109,8 +109,7 @@ func migrate() {
 			created_at TIMESTAMP DEFAULT NOW()
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_ledger_payment ON ledger_entries(payment_id)`,
-		// One row per Idempotency-Key on /charge: what was asked (hash) and what was answered.
-		// status_code and response stay NULL while the first request is still running.
+		// status_code and response stay NULL while the first request is running.
 		`CREATE TABLE IF NOT EXISTS payment_idempotency_keys (
 			key VARCHAR(255) PRIMARY KEY,
 			request_hash CHAR(64) NOT NULL,
@@ -198,8 +197,7 @@ func handleCharge(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
-	// Claim the key in the same transaction as the payment. If another request holds it,
-	// this waits for that one to finish, then answers with its result.
+	// Claim the key in the payment's transaction; a concurrent request waits for it.
 	if key != "" {
 		claim, err := tx.Exec(
 			`INSERT INTO payment_idempotency_keys (key, request_hash, order_id) VALUES ($1, $2, $3)

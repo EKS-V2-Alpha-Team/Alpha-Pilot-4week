@@ -500,8 +500,7 @@ func TestReserveAgainOutageKeepsMessageForRetry(t *testing.T) {
 	}
 }
 
-// Every retry of one order's charge must carry the same key, so payment can answer a
-// retry with the first result (a decline included) instead of trying the card again.
+// Every retry of one order's charge carries the same key.
 func TestChargeCarriesTheSameKeyOnEveryRetry(t *testing.T) {
 	var keys []string
 	for i := 0; i < 2; i++ {

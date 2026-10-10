@@ -282,8 +282,7 @@ func processNewOrder(client *http.Client, services map[string]string, o newOrder
 		return fmt.Errorf("reserve: unexpected status %d", code)
 	}
 
-	// Every retry of this order's charge uses the same key, so payment answers a retry
-	// with the first result, a decline included, instead of trying the card again.
+	// Same key on every retry, so payment replays the first answer.
 	code, err = sendJSONWithKey(client, http.MethodPost, services["payment"]+"/charge", chargeKey(o.OrderID), map[string]interface{}{
 		"order_id":    o.OrderID,
 		"customer_id": o.CustomerID,

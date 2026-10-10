@@ -213,9 +213,7 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 	} else {
 		claims, err := validateToken(r)
 		if err != nil {
-			// A missing or bad token is counted per client IP, so guessing tokens or probing
-			// protected routes gets a 429 after a few tries. Good tokens are never counted,
-			// so an attacker cannot use this to lock out real users who share the IP.
+			// Missing or bad tokens count against the client IP; good tokens never do.
 			if rateLimited(w, r, scopeBadToken, clientIP(r), rlConfig.sensitiveLimit) {
 				return
 			}
@@ -285,9 +283,7 @@ func forward(w http.ResponseWriter, r *http.Request, targetURL string) {
 		httpError(w, "service unavailable", http.StatusBadGateway)
 	}
 
-	// Pass the real client on to the services. From a trusted proxy (Traefik) the incoming
-	// X-Forwarded-For chain is kept and ReverseProxy appends this hop to it. From anyone
-	// else the header is dropped, because a client could have written it.
+	// Keep X-Forwarded-For only when it comes from a trusted proxy.
 	if !fromTrustedProxy(r) {
 		r.Header.Del("X-Forwarded-For")
 	}

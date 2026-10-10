@@ -82,8 +82,7 @@ func TestConcurrentChargesWithOneKeyChargeOnce(t *testing.T) {
 	close(start)
 	wg.Wait()
 	for i, c := range codes {
-		// 201 (first or replayed), 200 (it saw the order already paid before the key
-		// was saved) or 409 (the first was still running): never a second charge.
+		// 201, 200 or 409 are all fine; a second charge is not.
 		if c != http.StatusCreated && c != http.StatusOK && c != http.StatusConflict {
 			t.Errorf("request %d: got %d, want 201, 200 or 409", i, c)
 		}
@@ -105,8 +104,7 @@ func TestChargeWithoutAKeyStillWorks(t *testing.T) {
 	}
 }
 
-// sameJSON compares two responses as JSON (Postgres stores the saved answer as JSONB,
-// which may order the keys differently).
+// sameJSON compares two responses as JSON, ignoring key order.
 func sameJSON(t *testing.T, a, b *httptest.ResponseRecorder) bool {
 	t.Helper()
 	var x, y map[string]interface{}

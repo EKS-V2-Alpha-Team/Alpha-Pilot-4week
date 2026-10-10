@@ -1,12 +1,6 @@
 package main
 
-// Idempotency-Key on POST /charge.
-//
-// The database already allows one completed charge per order (ADR 0002). The key adds
-// what that rule can't: a retried charge gets back exactly the first answer, including a
-// decline. Without it, a charge that was declined could be sent again and approved on the
-// second try. The worker sends "charge-order-<id>", so every retry of one order's charge
-// uses the same key. Calls without a key keep working as before.
+// Idempotency-Key handling for POST /charge: a retry gets the first answer back.
 
 import (
 	"crypto/sha256"
@@ -19,16 +13,14 @@ import (
 
 const maxIdempotencyKeyLen = 255
 
-// chargeFingerprint identifies what was asked for, so a key reused for a different
-// charge is refused instead of answered with the wrong result.
+// chargeFingerprint identifies the charge a key was first used for.
 func chargeFingerprint(orderID int, customerID string, amount float64, currency, method string) string {
 	s := fmt.Sprintf("%d|%s|%.2f|%s|%s", orderID, customerID, amount, currency, method)
 	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:])
 }
 
-// replayCharge answers from a stored result when this key was used before. It returns
-// true when it has written a response, false when the key is new.
+// replayCharge writes the stored answer for a known key and reports whether it did.
 func replayCharge(w http.ResponseWriter, key, fingerprint string) bool {
 	var hash string
 	var code sql.NullInt64

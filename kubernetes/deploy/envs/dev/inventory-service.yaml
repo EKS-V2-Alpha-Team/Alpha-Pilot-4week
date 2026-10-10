@@ -2,7 +2,9 @@
 image:
   tag: inventory-service-0aedbc78
 
-replicaCount: 1
+autoscaling:
+  minReplicas: 1
+  maxReplicas: 3
 
 env:
   # Dev only: gives the dashboard a catalogue to order from. Never set in prod.

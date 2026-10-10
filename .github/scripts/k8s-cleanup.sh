@@ -21,7 +21,7 @@ wait_for() {
     fi
     echo "Waiting for $what"; sleep 15
   done
-  echo " $what: none left"
+  echo "✅ $what: none left"
 }
 
 # --- lookups
@@ -77,9 +77,15 @@ aws_leftovers() {
     elif ! aws ec2 describe-snapshots --snapshot-ids "$id" 2>&1 | grep -q InvalidSnapshot.NotFound; then
       echo "ebs-snapshot $id (lookup failed)"; fi
   done < "$IDS_DIR/snapshots.txt"
-  [ -n "${VPC_ID:-}" ] && aws ec2 describe-network-interfaces \
-    --filters "Name=vpc-id,Values=$VPC_ID" "Name=status,Values=available" \
-    --query 'NetworkInterfaces[].NetworkInterfaceId' --output text | ids | sed 's/^/detached-eni /'
+  if [ -n "${VPC_ID:-}" ]; then
+    # Cluster still up: its nodes' ENIs are in use, so only detached ones count.
+    aws ec2 describe-network-interfaces --filters "Name=vpc-id,Values=$VPC_ID" "Name=status,Values=available" \
+      --query 'NetworkInterfaces[].NetworkInterfaceId' --output text | ids | sed 's/^/detached-eni /'
+  else
+    # Cluster gone: any ENI the VPC CNI tagged for it is a leftover.
+    aws ec2 describe-network-interfaces --filters "Name=tag:cluster.k8s.amazonaws.com/name,Values=$CLUSTER_NAME" \
+      --query 'NetworkInterfaces[].NetworkInterfaceId' --output text | ids | sed 's/^/eni /'
+  fi
   dns_records | sed 's/^/dns-record /'
 }
 
@@ -220,7 +226,50 @@ diagnostics() {
   done
 }
 
+# Finds the cluster. MISSING = already destroyed, so only the AWS check runs (the run after
+# Terraform Destroy). Any other non-ACTIVE state is mid-change.
+check() {
+  local status
+  status=$(aws eks describe-cluster --name "$CLUSTER_NAME" --query cluster.status --output text 2>/dev/null || echo MISSING)
+  echo "$CLUSTER_NAME is $status"
+  case "$status" in
+    ACTIVE)
+      CLUSTER_EXISTS=true
+      echo "exists=true" >> "$GITHUB_OUTPUT"
+      { echo "CLUSTER_EXISTS=true"
+        echo "VPC_ID=$(aws eks describe-cluster --name "$CLUSTER_NAME" --query cluster.resourcesVpcConfig.vpcId --output text)"
+      } >> "$GITHUB_ENV"
+      aws eks update-kubeconfig --name "$CLUSTER_NAME" ;;
+    MISSING) echo "exists=false" >> "$GITHUB_OUTPUT" ;;
+    *) fail "$CLUSTER_NAME is $status, re-run when it's finished" ;;
+  esac
+  zone
+}
+
+# Runs the deletions in order, each as its own collapsible section in the log.
+teardown() {
+  local step
+  for step in gitops dns_sync snapshots volumes loadbalancers karpenter; do
+    echo "::group::$step"
+    "$step"
+    echo "::endgroup::"
+  done
+}
+
+# After the cluster is gone: EBS has no cluster tag, so use the IDs the last successful cleanup recorded.
+fetch_ids() {
+  local run
+  for run in $(gh run list -R "$GITHUB_REPOSITORY" --workflow k8s-cleanup.yaml --status success \
+                 --limit 20 --json databaseId --jq '.[].databaseId'); do
+    if gh run download "$run" -R "$GITHUB_REPOSITORY" -n "k8s-ids-$ENVIRONMENT" -D "$IDS_DIR" 2>/dev/null; then
+      echo "Checking the volume/snapshot IDs recorded by run $run"
+      return 0
+    fi
+  done
+  echo "::warning::No recorded IDs found, so EBS volumes and snapshots aren't checked"
+}
+
 case "${1:-}" in
-  zone|preflight|gitops|dns_sync|snapshots|volumes|loadbalancers|karpenter|leftovers|diagnostics) "$1" ;;
+  check|preflight|teardown|fetch_ids|leftovers|diagnostics|zone|gitops|dns_sync|snapshots|volumes|loadbalancers|karpenter) "$1" ;;
   *) fail "Unknown step '${1:-}'" ;;
 esac

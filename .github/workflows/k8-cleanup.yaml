@@ -1,150 +1,118 @@
 name: K8s Cleanup
 
-# Removes what Kubernetes created in AWS (NLB, DNS records, EBS volumes and snapshots,
-# Karpenter nodes), then destroys infra/argocd-bootstrap. Run before Terraform Destroy.
-# The steps are in .github/scripts/k8s-cleanup.sh.
 on:
   workflow_dispatch:
     inputs:
       environment:
-        description: "Environment to clean up"
+        description: "Environment"
         required: true
         type: choice
         options: [dev, staging, prod]
-      confirm:
-        description: "Type the environment name again to confirm"
-        required: true
-        type: string
 
 permissions:
   id-token: write
   contents: read
+  actions: read
+  issues: write
 
 env:
-  AWS_REGION: ${{ vars.AWS_REGION }}
   ENVIRONMENT: ${{ inputs.environment }}
-  ALLOWED_ENVS: "dev staging prod"
   CLUSTER_NAME: eks-v2-${{ inputs.environment }}-cluster
-  TF_VERSION: "1.16.3"
-
-defaults:
-  run:
-    shell: bash
+  SCRIPT: .github/scripts/k8s-cleanup.sh
+  GH_TOKEN: ${{ github.token }}
 
 jobs:
-  validate:
+  cleanup:
     runs-on: ubuntu-latest
-    steps:
-      - name: Check the request
-        env:
-          CONFIRM: ${{ inputs.confirm }}
-        run: |
-          [ "$CONFIRM" = "$ENVIRONMENT" ] || { echo "::error::Type \"$ENVIRONMENT\" to confirm"; exit 1; }
-          grep -qw -- "$ENVIRONMENT" <<<"$ALLOWED_ENVS" || { echo "::error::Cleanup isn't enabled for $ENVIRONMENT"; exit 1; }
+    environment: ${{ inputs.environment }}
+    concurrency: k8s-cleanup-${{ inputs.environment }}
+    outputs:
+      cluster_exists: ${{ steps.cluster.outputs.exists }}
 
-  approve:
-    needs: validate
-    if: inputs.environment == 'prod'
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    permissions:
-      issues: write
     steps:
-      - uses: trstringer/manual-approval@fa642940caf8412403569b28b2db4a1df08a83a3 # v1.13.1
+      - name: Wait for prod approval
+        if: inputs.environment == 'prod'
+        uses: trstringer/manual-approval@v1
         with:
           secret: ${{ github.token }}
           approvers: ${{ vars.PROD_APPROVERS }}
           minimum-approvals: 1
           exclude-workflow-initiator-as-approver: true
-          issue-title: "Approve K8s Cleanup of prod (run ${{ github.run_id }})"
-          issue-body: "Started by @${{ github.actor }}. Takes prod down: deletes the NLB, DNS records, all PVCs (no backup), snapshots, Karpenter nodes and ArgoCD."
 
-  cleanup:
-    needs: [validate, approve]
-    if: ${{ !cancelled() && needs.validate.result == 'success' && needs.approve.result != 'failure' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
-    environment: ${{ inputs.environment }}
-    concurrency: k8s-cleanup-${{ inputs.environment }}
-    outputs:
-      cluster_exists: ${{ steps.cluster.outputs.exists }}
-    env:
-      SCRIPT: .github/scripts/k8s-cleanup.sh
-    steps:
-      - uses: actions/checkout@v7
+      - name: Checkout Repository
+        uses: actions/checkout@v7
 
-      - uses: aws-actions/configure-aws-credentials@v6
+      - name: Configure AWS credentials w/ OIDC
+        uses: aws-actions/configure-aws-credentials@v6
         with:
-          aws-region: ${{ env.AWS_REGION }}
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
 
-      # MISSING = already destroyed, so a re-run only checks AWS. Any other non-ACTIVE state is mid-change.
       - name: Check the cluster
         id: cluster
-        run: |
-          status=$(aws eks describe-cluster --name "$CLUSTER_NAME" --query cluster.status --output text 2>/dev/null || echo MISSING)
-          echo "$CLUSTER_NAME is $status"
-          case "$status" in
-            ACTIVE) echo "exists=true" >> "$GITHUB_OUTPUT"
-                    echo "CLUSTER_EXISTS=true" >> "$GITHUB_ENV"
-                    echo "VPC_ID=$(aws eks describe-cluster --name "$CLUSTER_NAME" --query cluster.resourcesVpcConfig.vpcId --output text)" >> "$GITHUB_ENV"
-                    aws eks update-kubeconfig --name "$CLUSTER_NAME" ;;
-            MISSING) echo "exists=false" >> "$GITHUB_OUTPUT" ;;
-            *) echo "::error::$CLUSTER_NAME is $status, re-run when it's finished"; exit 1 ;;
-          esac
+        run: bash "$SCRIPT" check
 
-      - run: bash "$SCRIPT" zone
-      - if: env.CLUSTER_EXISTS == 'true'
+      - name: Preflight checks
+        if: env.CLUSTER_EXISTS == 'true'
         run: bash "$SCRIPT" preflight
-      - if: env.CLUSTER_EXISTS == 'true'
-        run: bash "$SCRIPT" gitops
-      - if: env.CLUSTER_EXISTS == 'true'
-        run: bash "$SCRIPT" dns_sync
-      - if: env.CLUSTER_EXISTS == 'true'
-        run: bash "$SCRIPT" snapshots
-      - if: env.CLUSTER_EXISTS == 'true'
-        run: bash "$SCRIPT" volumes
-      - if: env.CLUSTER_EXISTS == 'true'
-        run: bash "$SCRIPT" loadbalancers
-      - if: env.CLUSTER_EXISTS == 'true'
-        run: bash "$SCRIPT" karpenter
-      - run: bash "$SCRIPT" leftovers
-      - if: failure() && env.CLUSTER_EXISTS == 'true'
+
+      - name: Upload the recorded IDs
+        if: env.CLUSTER_EXISTS == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: k8s-ids-${{ inputs.environment }}
+          path: |
+            ${{ runner.temp }}/volumes.txt
+            ${{ runner.temp }}/snapshots.txt
+          overwrite: true
+
+      - name: Delete what Kubernetes created in AWS
+        if: env.CLUSTER_EXISTS == 'true'
+        run: bash "$SCRIPT" teardown
+
+      - name: Download the recorded IDs
+        if: env.CLUSTER_EXISTS != 'true'
+        run: bash "$SCRIPT" fetch_ids
+
+      - name: Check AWS for leftovers
+        run: bash "$SCRIPT" leftovers
+
+      - name: Diagnostics
+        if: failure() && env.CLUSTER_EXISTS == 'true'
         run: bash "$SCRIPT" diagnostics
 
   argocd-bootstrap:
     needs: cleanup
     runs-on: ubuntu-latest
-    timeout-minutes: 30
     environment: ${{ inputs.environment }}
-    # Shared with the ArgoCD Bootstrap workflow, so an apply and this destroy never overlap.
     concurrency: argocd-bootstrap-${{ inputs.environment }}
-    env:
-      TF_VAR_environment: ${{ inputs.environment }}
     defaults:
       run:
-        working-directory: infra/argocd-bootstrap
+        working-directory: ./infra/argocd-bootstrap
+    env:
+      TF_VAR_environment: ${{ inputs.environment }}
+      CLUSTER_EXISTS: ${{ needs.cleanup.outputs.cluster_exists }}
+
     steps:
-      - uses: actions/checkout@v7
+      - name: Checkout Repository
+        uses: actions/checkout@v7
 
-      - uses: aws-actions/configure-aws-credentials@v6
+      - name: Configure AWS credentials w/ OIDC
+        uses: aws-actions/configure-aws-credentials@v6
         with:
-          aws-region: ${{ env.AWS_REGION }}
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
 
-      - uses: hashicorp/setup-terraform@v4
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
         with:
-          terraform_version: ${{ env.TF_VERSION }}
+          terraform_version: "1.16.3"
           terraform_wrapper: false
 
-      - run: terraform init -input=false -backend-config="backend/${ENVIRONMENT}.hcl"
+      - name: Terraform Init
+        run: terraform init -input=false -backend-config="backend/${ENVIRONMENT}.hcl"
 
-      # Nothing in state: ArgoCD is already destroyed, so skip.
-      # Cluster gone but state still lists ArgoCD: Terraform can't connect to destroy it.
-      # Stop here so a person can check and run `terraform state rm` to clear the records.
       - name: Terraform Destroy
-        env:
-          CLUSTER_EXISTS: ${{ needs.cleanup.outputs.cluster_exists }}
         run: |
           state=$(terraform state list)
           [ -n "$state" ] || { echo "Nothing to destroy"; exit 0; }

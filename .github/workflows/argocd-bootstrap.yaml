@@ -8,7 +8,7 @@ on:
       - main
     paths:
       - "infra/argocd-bootstrap/**"
-      - "kubernetes/platform/root-app.yaml"
+      - "kubernetes/platform/root-app-*.yaml"
       - "kubernetes/helm-values/argocd-values.yaml"
       - ".github/workflows/argocd-bootstrap.yaml"
   workflow_dispatch:
@@ -20,6 +20,8 @@ on:
         default: dev
         options:
           - dev
+          - staging
+          - prod
       terraform_plan_run_id:
         description: "Run ID of the ArgoCD Bootstrap plan to apply (leave empty to only plan)"
         required: false
@@ -104,7 +106,7 @@ jobs:
       # Terraform can't plan this stack without the cluster so it fails rather skipping
       - name: Check the cluster is ACTIVE
         run: |
-          : "${CLUSTER_NAME:?Set CLUSTER_NAME in the dev environment variables}"
+          : "${CLUSTER_NAME:?Set CLUSTER_NAME in the ${{ inputs.environment }} environment variables}"
           status=$(aws eks describe-cluster --name "$CLUSTER_NAME" --query cluster.status --output text 2>/dev/null || echo MISSING)
           if [ "$status" != "ACTIVE" ]; then
             echo "::error::$CLUSTER_NAME is $status, so the argocd-bootstrap plan can't run. Run Terraform workflow Apply first (and wait for it to finish), then re-run this check."
@@ -157,8 +159,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
-      # The pipeline role created the cluster, so it has cluster-admin through
-      # the cluster creator access entry (authentication_mode = API).
+      # The environment's pipeline role has cluster-admin through the access entry
+      # Terraform adds in the eks module (authentication_mode = API).
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -173,7 +175,7 @@ jobs:
       # The cluster may have been destroyed or be mid-rebuild since the plan was made.
       - name: Check the cluster is ACTIVE
         run: |
-          : "${CLUSTER_NAME:?Set CLUSTER_NAME in the dev environment variables}"
+          : "${CLUSTER_NAME:?Set CLUSTER_NAME in the ${{ inputs.environment }} environment variables}"
           status=$(aws eks describe-cluster --name "$CLUSTER_NAME" --query cluster.status --output text 2>/dev/null || echo MISSING)
           if [ "$status" != "ACTIVE" ]; then
             echo "::error::$CLUSTER_NAME is $status. Run Terraform Apply first, then plan this workflow again."
@@ -198,22 +200,33 @@ jobs:
 
       - name: Configure kubectl
         run: |
-          : "${CLUSTER_NAME:?Set CLUSTER_NAME in the dev environment variables}"
-          : "${APP_HOST:?Set APP_HOST in the dev environment variables}"
+          : "${CLUSTER_NAME:?Set CLUSTER_NAME in the ${{ inputs.environment }} environment variables}"
+          : "${APP_HOST:?Set APP_HOST in the ${{ inputs.environment }} environment variables}"
           aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$AWS_REGION"
 
+      # Prod services have no auto-sync (someone syncs each release), so for prod
+      # this waits for the platform only.
       - name: Wait for all Applications to be Synced and Healthy
         working-directory: .
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
         run: |
-          expected=$(( 1 + $(grep -l '^kind: Application$' kubernetes/platform/apps/*.yaml | wc -l) \
-                         + $(find kubernetes/deploy/services -mindepth 1 -maxdepth 1 -type d | wc -l) ))
+          platform=$(helm template kubernetes/platform/apps --set environment="$ENVIRONMENT" | grep -c '^kind: Application$')
+          services=$(find kubernetes/deploy/services -mindepth 1 -maxdepth 1 -type d | wc -l)
+          skip=""
+          if [ "$ENVIRONMENT" = "prod" ]; then
+            services=0
+            skip="-prod"
+          fi
+          expected=$(( 1 + platform + services ))
           deadline=$(( $(date +%s) + 30 * 60 ))
           while true; do
-            if ! apps=$(kubectl -n argocd get applications -o json); then
+            if ! all=$(kubectl -n argocd get applications -o json); then
               echo "kubectl failed, retrying"
               sleep 20
               continue
             fi
+            apps=$(jq --arg skip "$skip" '{items: [.items[] | select($skip == "" or (.metadata.name | endswith($skip) | not))]}' <<<"$all")
             total=$(jq '.items | length' <<<"$apps")
             ready=$(jq '[.items[] | select(.status.sync.status == "Synced" and .status.health.status == "Healthy")] | length' <<<"$apps")
             echo "$ready/$expected Applications Synced and Healthy ($total found)"
@@ -229,6 +242,7 @@ jobs:
           kubectl -n argocd get applications
 
       - name: Check the app is reachable
+        if: inputs.environment != 'prod'
         run: |
           kubectl -n traefik get svc traefik
           for i in $(seq 1 40); do

@@ -1,0 +1,4 @@
+apiVersion: v2
+name: platform-apps
+description: App of apps. Every platform tool and the services ApplicationSet for one environment's cluster.
+version: 0.1.0

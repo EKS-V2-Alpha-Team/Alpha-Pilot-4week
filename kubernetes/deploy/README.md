@@ -11,7 +11,7 @@ kubernetes/deploy/
 ```
 
 Files are layered in this order (later wins). The ArgoCD ApplicationSet
-(`platform/apps/order-platform.yaml`) uses the same order, with paths relative to the chart
+(`platform/apps/templates/order-platform.yaml`) uses the same order, with paths relative to the chart
 and the SSH repo URL (`git@github.com:EKS-V2-Alpha-Team/Alpha-Pilot-4week.git`) so ArgoCD's deploy key matches:
 
 ```yaml

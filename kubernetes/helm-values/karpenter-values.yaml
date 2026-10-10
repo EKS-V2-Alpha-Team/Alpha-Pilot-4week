@@ -1,5 +1,4 @@
-settings:
-  clusterName: eks-v2-dev-cluster
+# settings.clusterName is per environment: envs/<env>/karpenter-values.yaml
 
 # Must match the Pod Identity association in Terraform (kube-system / karpenter).
 serviceAccount:

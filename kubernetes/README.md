@@ -1,18 +1,20 @@
 # Platform
 
-Cluster tools the apps depend on. ArgoCD is installed once by hand; ArgoCD installs everything else from `platform/apps/` (App of Apps). Every platform change is a pull request, and ArgoCD reverts changes made by hand (`selfHeal`).
+Cluster tools the apps depend on. Each environment (dev, staging, prod) has its own cluster and its own ArgoCD. `infra/argocd-bootstrap` installs ArgoCD and that environment's root app; ArgoCD installs everything else from the `platform/apps/` chart (App of Apps). Every platform change is a pull request, and ArgoCD reverts changes made by hand (`selfHeal`).
 
 | Path                                               | What                                                                                              |
 | -------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `helmfile.yaml` + `helm-values/argocd-values.yaml` | ArgoCD, installed by hand once                                                                    |
-| `platform/root-app.yaml`                           | Root app, applied by hand once; points at `platform/apps/`                                        |
-| `platform/apps/`                                   | One ArgoCD Application per tool: upstream chart at a pinned version + our values file             |
-| `platform/manifests/`                              | Our own cluster resources (ClusterIssuers, ClusterSecretStore, Karpenter EC2NodeClass + NodePool, `order-platform` namespace, default gp3 StorageClass, default `ebs-csi` VolumeSnapshotClass) |
-| `platform/apps/`                                   | One ArgoCD Application per tool (pinned chart + our values), plus the services ApplicationSet     |
-| `platform/manifests/`                              | Our own cluster resources (ClusterIssuers, ClusterSecretStore, Karpenter EC2NodeClass + NodePool) |
+| `helmfile.yaml` + `helm-values/argocd-values.yaml` | ArgoCD, installed by hand once (or by `infra/argocd-bootstrap`)                                    |
+| `platform/root-app-<env>.yaml`                     | Root app per environment. Installs the `platform/apps/` chart with `environment: <env>`           |
+| `platform/apps/`                                   | Helm chart: one ArgoCD Application per tool (pinned chart + our values) and the services ApplicationSet. `environment` picks the per-env files below; Postgres is dev only, prod services have no auto-sync |
+| `platform/manifests/`                              | Our own cluster resources, the same in every environment (ClusterIssuers, ClusterSecretStore, Karpenter NodePool, namespaces, default gp3 StorageClass, default `ebs-csi` VolumeSnapshotClass) |
+| `platform/manifests/envs/<env>/`                   | The ones that name the environment: Karpenter EC2NodeClass, Grafana secret, Postgres secret (dev) |
 | `helm-values/`                                     | Values for every chart. Non-obvious settings are explained inline                                 |
+| `helm-values/envs/<env>/`                          | Per-environment overrides: cluster name, VPC tags, ExternalDNS owner ID, public hostname           |
 | `charts/microservice/`                             | Shared chart for the 9 services (see `deploy/README.md`)                                          |
 | `deploy/`                                          | Per-service and per-environment values for that chart                                             |
+
+To see what a cluster gets: `helm template kubernetes/platform/apps --set environment=staging`.
 
 ## Tools
 
@@ -80,7 +82,7 @@ kubectl -n argocd create secret generic alpha-repo \
 kubectl -n argocd label secret alpha-repo argocd.argoproj.io/secret-type=repository
 
 # 3. Hand over to ArgoCD
-kubectl apply -f kubernetes/platform/root-app.yaml
+kubectl apply -f kubernetes/platform/root-app-dev.yaml
 kubectl -n argocd get applications -w
 ```
 

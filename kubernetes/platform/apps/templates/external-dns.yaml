@@ -1,23 +1,24 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: karpenter
+  name: external-dns
   namespace: argocd
   annotations:
-    argocd.argoproj.io/sync-wave: "-3"
+    argocd.argoproj.io/sync-wave: "-1"
 spec:
   project: default
   destination:
     server: https://kubernetes.default.svc
-    namespace: kube-system
+    namespace: external-dns
   sources:
-    - repoURL: public.ecr.aws/karpenter
-      chart: karpenter
-      targetRevision: 1.14.1
+    - repoURL: https://kubernetes-sigs.github.io/external-dns/
+      chart: external-dns
+      targetRevision: 1.23.0
       helm:
-        releaseName: karpenter
+        releaseName: external-dns
         valueFiles:
-          - $values/kubernetes/helm-values/karpenter-values.yaml
+          - $values/kubernetes/helm-values/external-dns-values.yaml
+          - $values/kubernetes/helm-values/envs/{{ .Values.environment }}/external-dns-values.yaml
     - repoURL: git@github.com:EKS-V2-Alpha-Team/Alpha-Pilot-4week.git
       targetRevision: main
       ref: values

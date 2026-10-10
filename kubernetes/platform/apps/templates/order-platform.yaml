@@ -1,8 +1,9 @@
-# Generates one Application per folder in kubernetes/deploy/services/ (<svc>-dev),
+# Generates one Application per folder in kubernetes/deploy/services/ (<svc>-<env>).
+# {{`{{ ... }}`}} is ArgoCD's own template syntax, wrapped so Helm leaves it for the ApplicationSet.
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
-  name: order-platform-dev
+  name: order-platform-{{ .Values.environment }}
   namespace: argocd
   annotations:
     # After the platform (-3 to -1): the apps need Traefik, External Secrets and the CRDs.
@@ -19,7 +20,7 @@ spec:
           - path: kubernetes/deploy/services/*
   template:
     metadata:
-      name: "{{ .path.basename }}-dev"
+      name: "{{`{{ .path.basename }}`}}-{{ .Values.environment }}"
       # Removing a service folder also deletes its Kubernetes resources, not just the Application.
       finalizers:
         - resources-finalizer.argocd.argoproj.io
@@ -34,14 +35,17 @@ spec:
         targetRevision: main
         path: kubernetes/charts/microservice
         helm:
-          releaseName: "{{ .path.basename }}"
+          releaseName: "{{`{{ .path.basename }}`}}"
           valueFiles:
-            - ../../deploy/services/{{ .path.basename }}/values.yaml
-            - ../../deploy/envs/dev/common.yaml
-            - ../../deploy/envs/dev/{{ .path.basename }}.yaml
+            - ../../deploy/services/{{`{{ .path.basename }}`}}/values.yaml
+            - ../../deploy/envs/{{ .Values.environment }}/common.yaml
+            - ../../deploy/envs/{{ .Values.environment }}/{{`{{ .path.basename }}`}}.yaml
+      # Prod has no auto-sync: a release reaches prod only when someone syncs it in ArgoCD.
       syncPolicy:
+        {{- if ne .Values.environment "prod" }}
         automated:
           prune: true
           selfHeal: true
+        {{- end }}
         syncOptions:
           - CreateNamespace=true

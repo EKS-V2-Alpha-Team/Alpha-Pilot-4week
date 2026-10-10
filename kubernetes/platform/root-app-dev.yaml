@@ -1,16 +1,19 @@
+# dev root Application, installed by infra/argocd-bootstrap on the dev cluster.
+# Installs every platform tool and the dev services from the platform-apps chart (apps/).
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: platform-manifests
+  name: platform
   namespace: argocd
-  annotations:
-    argocd.argoproj.io/sync-wave: "-2"
 spec:
   project: default
   source:
     repoURL: git@github.com:EKS-V2-Alpha-Team/Alpha-Pilot-4week.git
     targetRevision: main
-    path: kubernetes/platform/manifests
+    path: kubernetes/platform/apps
+    helm:
+      valuesObject:
+        environment: dev
   destination:
     server: https://kubernetes.default.svc
     namespace: argocd

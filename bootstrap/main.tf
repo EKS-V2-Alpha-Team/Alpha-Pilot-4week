@@ -102,28 +102,6 @@ resource "aws_iam_openid_connect_provider" "github" {
   }
 }
 
-resource "aws_iam_role" "github_actions" {
-  name = "${var.project_name}-${var.environment}-github-actions-role"
-
-  assume_role_policy = templatefile("${path.module}/policies/github-actions-trust.json", {
-    oidc_provider_arn = aws_iam_openid_connect_provider.github.arn
-    github_org        = var.github_org
-    github_repo       = var.github_repo
-    github_org_id     = var.github_org_id
-    github_repo_id    = var.github_repo_id
-  })
-
-  tags = {
-    Name = "${var.project_name}-github-actions-role"
-  }
-}
-
-resource "aws_iam_role_policy" "github_actions" {
-  name   = "${var.project_name}-${var.environment}-github-actions-policy"
-  role   = aws_iam_role.github_actions.id
-  policy = file("${path.module}/policies/github-actions-permissions.json")
-}
-
 # new state
 
 locals {

@@ -1,7 +1,7 @@
 name: ArgoCD Bootstrap
 
 # infra/argocd-bootstrap: installs ArgoCD, the repo credentials and the root app on the cluster
-# Depends on Terraform Apply Workflow: both jobs stop unless the EKS cluster exists and is ACTIVE
+# Depends on Terraform Apply Workflow: plan and apply stop unless the EKS cluster exists and is ACTIVE
 on:
   pull_request:
     branches:
@@ -13,6 +13,13 @@ on:
       - ".github/workflows/argocd-bootstrap.yaml"
   workflow_dispatch:
     inputs:
+      environment:
+        description: "Environment"
+        required: true
+        type: choice
+        default: dev
+        options:
+          - dev
       terraform_plan_run_id:
         description: "Run ID of the ArgoCD Bootstrap plan to apply (leave empty to only plan)"
         required: false
@@ -27,14 +34,40 @@ permissions:
   id-token: write
   contents: read
   actions: read
-  pull-requests: write
 
 jobs:
+  validate:
+    name: Terraform Validate (argocd-bootstrap)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Initialize Terraform without the backend
+        run: terraform init -input=false -backend=false
+
+      - name: Terraform Format
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Validate
+        run: terraform validate
+
   plan:
     name: Terraform Plan (argocd-bootstrap)
-    if: github.event_name == 'pull_request' || inputs.terraform_plan_run_id == ''
+    if: github.event_name == 'workflow_dispatch' && inputs.terraform_plan_run_id == ''
     runs-on: ubuntu-latest
-    environment: dev
+    environment: ${{ inputs.environment }}
 
     env:
       CLUSTER_NAME: ${{ vars.CLUSTER_NAME }}
@@ -51,7 +84,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-region: ${{ env.AWS_REGION }}
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v4
@@ -83,21 +116,12 @@ jobs:
       - name: Upload plan artifact
         uses: actions/upload-artifact@v7
         with:
-          name: tfplan-argocd-bootstrap
+          name: tfplan-argocd-bootstrap-${{ inputs.environment || 'dev' }}
           path: |
             ${{ env.TF_WORKING_DIR }}/tfplan.binary
             ${{ env.TF_WORKING_DIR }}/.terraform.lock.hcl
           include-hidden-files: true
           retention-days: 5
-
-      - name: Post plan comment
-        if: github.event_name == 'pull_request'
-        uses: borchero/terraform-plan-comment@f585438eda2fa77c6f275994b92aeccd86ef3542 # v3
-        with:
-          token: ${{ github.token }}
-          planfile: tfplan.binary
-          working-directory: ${{ env.TF_WORKING_DIR }}
-          header: terraform plan (argocd-bootstrap)
 
       - name: Add plan to run summary
         run: |
@@ -114,9 +138,9 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.terraform_plan_run_id != ''
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    environment: dev
+    environment: ${{ inputs.environment }}
     concurrency:
-      group: argocd-bootstrap-apply
+      group: argocd-bootstrap-${{ inputs.environment || 'dev' }}
       cancel-in-progress: false
 
     env:
@@ -137,7 +161,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-region: ${{ env.AWS_REGION }}
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v4
@@ -158,7 +182,7 @@ jobs:
       - name: Download Terraform Plan
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
-          name: tfplan-argocd-bootstrap
+          name: tfplan-argocd-bootstrap-${{ inputs.environment || 'dev' }}
           run-id: ${{ inputs.terraform_plan_run_id }}
           path: ${{ env.TF_WORKING_DIR }}
           github-token: ${{ secrets.GITHUB_TOKEN }}

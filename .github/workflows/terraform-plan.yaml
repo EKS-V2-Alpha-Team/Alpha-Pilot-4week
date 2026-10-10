@@ -2,6 +2,17 @@ name: Terraform Plan
 
 on:
   workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to plan"
+        required: true
+        type: choice
+        default: all
+        options:
+          - all
+          - dev
+          - staging
+          - prod
   pull_request:
     branches:
       - main
@@ -24,7 +35,11 @@ jobs:
     strategy:
       fail-fast: false # one environment failing doesn't cancel the others
       matrix:
-        environment: [dev, staging, prod]
+        environment: ${{ fromJSON(inputs.environment && inputs.environment != 'all' && format('["{0}"]', inputs.environment) || '["dev","staging","prod"]') }}
+
+    concurrency:
+      group: terraform-plan-${{ matrix.environment }}-${{ github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
     defaults:
       run:
@@ -40,7 +55,7 @@ jobs:
       - name: Configure AWS credentials w/ OIDC
         uses: aws-actions/configure-aws-credentials@v6
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
       - name: Setup Terraform
@@ -80,9 +95,11 @@ jobs:
       - name: Upload plan artifact
         uses: actions/upload-artifact@v7
         with:
-          # dev keeps the name "tfplan" so the existing apply workflow still finds it
-          name: ${{ matrix.environment == 'dev' && 'tfplan' || format('tfplan-{0}', matrix.environment) }}
-          path: infra/terraform/environments/${{ matrix.environment }}/tfplan.binary
+          name: tfplan-${{ matrix.environment }}
+          path: |
+            infra/terraform/environments/${{ matrix.environment }}/tfplan.binary
+            infra/terraform/environments/${{ matrix.environment }}/.terraform.lock.hcl
+          include-hidden-files: true
           retention-days: 5
 
       - name: Post plan comment
@@ -100,7 +117,7 @@ jobs:
           echo "Writing the plan to the run summary..."
           {
             echo "## Terraform plan (${{ matrix.environment }})"
-            echo "To apply, run the Terraform Apply workflow with terraform_plan_run_id=${{ github.run_id }}"
+            echo "To apply, run the Terraform Apply workflow with environment=${{ matrix.environment }} and terraform_plan_run_id=${{ github.run_id }}"
             echo '```'
             terraform show -no-color tfplan.binary
             echo '```'

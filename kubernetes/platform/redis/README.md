@@ -17,4 +17,4 @@ Keep these true:
 - `whenDeleted: Delete` stays, or teardown leaves a billed disk behind.
 - The image tag stays exact (`redis:7.4.11-alpine`). docker-compose still runs `redis:7-alpine`, not aligned yet.
 
-Why it is built this way and the options we weighed: [Redis in the cluster](../../../docs/redis/redis-in-the-cluster.md) and [decision 0005](../../../docs/adr/0005-redis-in-the-cluster.md).
+Why it is built this way and the options we weighed: ADR 0005 in the team docs.

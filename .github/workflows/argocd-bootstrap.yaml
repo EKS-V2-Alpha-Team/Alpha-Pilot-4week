@@ -71,6 +71,7 @@ jobs:
 
     env:
       CLUSTER_NAME: ${{ vars.CLUSTER_NAME }}
+      TF_VAR_environment: ${{ inputs.environment }}
 
     defaults:
       run:
@@ -92,7 +93,7 @@ jobs:
           terraform_version: ${{ env.TF_VERSION }}
 
       - name: Initialize Terraform
-        run: terraform init -input=false
+        run: terraform init -input=false -backend-config=backend/${{ inputs.environment }}.hcl
 
       - name: Terraform Format
         run: terraform fmt -check -recursive
@@ -145,6 +146,7 @@ jobs:
 
     env:
       CLUSTER_NAME: ${{ vars.CLUSTER_NAME }}
+      TF_VAR_environment: ${{ inputs.environment }}
       APP_HOST: ${{ vars.APP_HOST }}
 
     defaults:
@@ -188,7 +190,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Initialize Terraform
-        run: terraform init -input=false
+        run: terraform init -input=false -backend-config=backend/${{ inputs.environment }}.hcl
 
       # Terraform refuses a stale plan (state changed since it was made): re-plan and retry
       - name: Terraform Apply

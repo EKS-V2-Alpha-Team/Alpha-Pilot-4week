@@ -110,6 +110,8 @@ Alpha-Pilot-4week/
 │
 ├── services/
 │
+├── tests/
+│
 ├── docker-compose.yml
 └── Makefile
 ```
@@ -177,6 +179,8 @@ docker compose up --build
 ```
 
 `make help` lists shortcuts for starting, stopping, testing and linting the services.
+
+How to run, test and build the services is in [services/README.md](services/README.md).
 
 ---
 

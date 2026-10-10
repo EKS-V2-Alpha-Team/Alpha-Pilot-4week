@@ -60,6 +60,14 @@ func setupHousekeepingDB(t *testing.T) {
 			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			PRIMARY KEY (customer_id, key)
 		)`,
+		`CREATE TABLE IF NOT EXISTS payment_idempotency_keys (
+			key VARCHAR(255) PRIMARY KEY,
+			request_hash CHAR(64) NOT NULL,
+			order_id INTEGER,
+			status_code INTEGER,
+			response JSONB,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
 		`CREATE TABLE IF NOT EXISTS notifications (
 			id SERIAL PRIMARY KEY,
 			recipient VARCHAR(255) NOT NULL,
@@ -284,6 +292,9 @@ func TestRetentionDeletesOldRowsAndKeepsRecentOnes(t *testing.T) {
 	mustExec(t, `UPDATE order_outbox SET created_at = NOW() - interval '30 days' WHERE event_type = 'unsent-old'`)
 	mustExec(t, `INSERT INTO idempotency_keys (customer_id, key, request_hash, order_id, created_at) VALUES
 		('a', 'old', 'h', $1, NOW() - interval '25 hours'), ('a', 'new', 'h', $1, NOW() - interval '23 hours')`, id)
+	mustExec(t, `TRUNCATE payment_idempotency_keys`)
+	mustExec(t, `INSERT INTO payment_idempotency_keys (key, request_hash, created_at) VALUES
+		('old', 'h', NOW() - interval '15 days'), ('new', 'h', NOW() - interval '13 days')`)
 	mustExec(t, `INSERT INTO notifications (recipient, channel, template, body, created_at) VALUES
 		('a', 'email', 't', 'b', NOW() - interval '91 days'), ('a', 'email', 't', 'b', NOW() - interval '89 days')`)
 
@@ -301,6 +312,8 @@ func TestRetentionDeletesOldRowsAndKeepsRecentOnes(t *testing.T) {
 		{"idempotency keys kept", `SELECT count(*) FROM idempotency_keys WHERE key = 'new'`, 1},
 		{"old idempotency key deleted", `SELECT count(*) FROM idempotency_keys WHERE key = 'old'`, 0},
 		{"notifications kept", `SELECT count(*) FROM notifications`, 1},
+		{"charge key kept", `SELECT count(*) FROM payment_idempotency_keys WHERE key = 'new'`, 1},
+		{"old charge key deleted", `SELECT count(*) FROM payment_idempotency_keys WHERE key = 'old'`, 0},
 	}
 	for _, c := range checks {
 		if got := countRows(t, c.query); got != c.want {

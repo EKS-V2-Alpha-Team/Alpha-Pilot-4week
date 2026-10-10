@@ -28,6 +28,8 @@ var retentionRules = []retentionRule{
 	{"order_outbox", `DELETE FROM order_outbox WHERE sent_at IS NOT NULL AND sent_at < NOW() - make_interval(secs => $1)`, 7 * 24 * time.Hour},
 	// A retry after 24 hours is a new attempt, not a retry of the old one.
 	{"idempotency_keys", `DELETE FROM idempotency_keys WHERE created_at < NOW() - make_interval(secs => $1)`, 24 * time.Hour},
+	// As long as a message can wait in the DLQ.
+	{"payment_idempotency_keys", `DELETE FROM payment_idempotency_keys WHERE created_at < NOW() - make_interval(secs => $1)`, 14 * 24 * time.Hour},
 	{"notifications", `DELETE FROM notifications WHERE created_at < NOW() - make_interval(secs => $1)`, 90 * 24 * time.Hour},
 }
 

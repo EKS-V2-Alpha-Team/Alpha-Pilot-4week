@@ -28,6 +28,7 @@ type fakeServices struct {
 	codes       map[string]int                    // path -> status code, default 200
 	seq         map[string][]int                  // path -> codes for the next calls, used before codes
 	orderStatus string                            // what GET /42 reports, default "pending"
+	keys        map[string]string                 // call -> Idempotency-Key header it carried
 }
 
 func newFakeServices(t *testing.T, codes map[string]int) (*fakeServices, map[string]string) {
@@ -37,7 +38,7 @@ func newFakeServices(t *testing.T, codes map[string]int) (*fakeServices, map[str
 
 func newFakeServicesWithStatus(t *testing.T, codes map[string]int, orderStatus string) (*fakeServices, map[string]string) {
 	t.Helper()
-	f := &fakeServices{codes: codes, orderStatus: orderStatus, bodies: map[string]map[string]interface{}{}}
+	f := &fakeServices{codes: codes, orderStatus: orderStatus, bodies: map[string]map[string]interface{}{}, keys: map[string]string{}}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		call := r.Method + " " + r.URL.Path
 		var body map[string]interface{}
@@ -56,6 +57,7 @@ func newFakeServicesWithStatus(t *testing.T, codes map[string]int, orderStatus s
 		f.mu.Lock()
 		f.calls = append(f.calls, call)
 		f.bodies[call] = body
+		f.keys[call] = r.Header.Get("Idempotency-Key")
 		code, ok := f.codes[r.URL.Path]
 		if q := f.seq[r.URL.Path]; len(q) > 0 {
 			code, ok = q[0], true
@@ -495,5 +497,18 @@ func TestReserveAgainOutageKeepsMessageForRetry(t *testing.T) {
 	_, err := runSeq(t, map[string][]int{"/commit": {409}, "/reserve": {201, 500}}, "pending", orderCreated(t), map[string]int{"/charge": 201})
 	if err == nil {
 		t.Fatal("got nil, want an error so SQS retries")
+	}
+}
+
+// Every retry of one order's charge carries the same key.
+func TestChargeCarriesTheSameKeyOnEveryRetry(t *testing.T) {
+	var keys []string
+	for i := 0; i < 2; i++ {
+		f, services := newFakeServices(t, map[string]int{"/charge": 500})
+		_ = handleEvent(&http.Client{Timeout: 2 * time.Second}, services, orderCreated(t))
+		keys = append(keys, f.keys["POST /charge"])
+	}
+	if keys[0] != "charge-order-42" || keys[1] != keys[0] {
+		t.Fatalf("charge keys %q, want charge-order-42 both times", keys)
 	}
 }

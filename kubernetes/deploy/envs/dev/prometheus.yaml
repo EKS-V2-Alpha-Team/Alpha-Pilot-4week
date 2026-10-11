@@ -1,0 +1,6 @@
+# Dev overrides for kube-prometheus-stack, layered on kubernetes/helm-values/prometheus-values.yaml.
+grafana:
+  grafana.ini:
+    server:
+      root_url: https://grafana.dev.eksv2.naimaosmann.com
+      

@@ -427,7 +427,7 @@
     {
       "id": 7,
       "type": "row",
-      "title": "HTTP: rate, errors and duration",
+      "title": "Request health",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -587,7 +587,7 @@
     {
       "id": 40,
       "type": "row",
-      "title": "Saturation: CPU and memory (Kubernetes)",
+      "title": "Saturation: CPU and memory",
       "collapsed": false,
       "gridPos": {
         "h": 1,

@@ -18,12 +18,16 @@ spec:
         releaseName: prometheus
         valueFiles:
           - $values/kubernetes/helm-values/prometheus-values.yaml
+          - $values/kubernetes/deploy/envs/dev/prometheus.yaml 
     - repoURL: git@github.com:EKS-V2-Alpha-Team/Alpha-Pilot-4week.git
       targetRevision: main
       ref: values
     - repoURL: git@github.com:EKS-V2-Alpha-Team/Alpha-Pilot-4week.git
       targetRevision: main
       path: kubernetes/charts/monitoring
+      helm:                                                          
+        valueFiles:                                                  
+          - $values/kubernetes/deploy/envs/dev/monitoring.yaml       
   syncPolicy:
     automated:
       prune: true

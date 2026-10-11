@@ -23,8 +23,8 @@ service:
     # ip targets drop the client IP by default; api-gateway rate-limits per client IP.
     service.beta.kubernetes.io/aws-load-balancer-target-group-attributes: preserve_client_ip.enabled=true
     # ExternalDNS (service source) points this name at the NLB. Must equal the
-    # api-gateway ingressRoute.host in the app chart's dev values.
-    external-dns.alpha.kubernetes.io/hostname: dashboard.dev.eksv2.naimaosmann.com
+    # api-gateway & Grafana ingressRoute.host in the app chart's dev values.
+    external-dns.alpha.kubernetes.io/hostname: dashboard.dev.eksv2.naimaosmann.com,grafana.dev.eksv2.naimaosmann.com
   spec:
     loadBalancerClass: service.k8s.aws/nlb
 

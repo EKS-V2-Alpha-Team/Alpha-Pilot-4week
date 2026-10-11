@@ -1,76 +1,54 @@
-# Secrets Manager Module
+<!-- BEGIN_TF_DOCS -->
+## Requirements
 
-## Purpose
+| Name | Version |
+| ---- | ------- |
+| <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.16.0 |
+| <a name="requirement_aws"></a> [aws](#requirement\_aws) | ~> 6.0 |
 
-Creates AWS Secrets Manager resources for the EKS v2
-application, encrypted using a customer-managed KMS key.
+## Providers
+
+| Name | Version |
+| ---- | ------- |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.68.0 |
+
+## Modules
+
+No modules.
 
 ## Resources
 
-- Customer-managed KMS key with automatic key rotation
-- KMS alias
-- Grafana password secret
-- api-gateway JWT signing secret (`<project>-<environment>-jwt-secret`)
-- Database credentials secret (`<project>-<environment>-db-credentials`), JSON `{"username", "password"}`
-- Independently generated values for each secret
-
-The rds module reads the database password from this secret, so RDS and the apps use the same value. The fixed name means the Helm values reference it once per environment instead of a new ARN after every rebuild.
+| Name | Type |
+| ---- | ---- |
+| [aws_kms_alias.eks_v2_secrets_manager](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/kms_alias) | resource |
+| [aws_kms_key.secret_encryption](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/kms_key) | resource |
+| [aws_secretsmanager_secret.db_connection](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/secretsmanager_secret) | resource |
+| [aws_secretsmanager_secret.db_credentials](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/secretsmanager_secret) | resource |
+| [aws_secretsmanager_secret.grafana_password_secret](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/secretsmanager_secret) | resource |
+| [aws_secretsmanager_secret.jwt_secret](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/secretsmanager_secret) | resource |
+| [aws_secretsmanager_secret_version.db_connection](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/secretsmanager_secret_version) | resource |
+| [aws_secretsmanager_secret_version.db_credentials](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/secretsmanager_secret_version) | resource |
+| [aws_secretsmanager_secret_version.grafana_password](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/secretsmanager_secret_version) | resource |
+| [aws_secretsmanager_secret_version.jwt_secret](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/secretsmanager_secret_version) | resource |
 
 ## Inputs
 
-| Name | Description | Type |
-|---|---|---|
-| project_name | Project name used in resource naming | string |
-| environment | Deployment environment | string |
-| db_username | RDS master username stored in the database credentials secret (default `dbadmin`) | string |
+| Name | Description | Type | Default | Required |
+| ---- | ----------- | ---- | ------- | :------: |
+| <a name="input_db_username"></a> [db\_username](#input\_db\_username) | postgres master username stored in the database credentials secret | `string` | `"dbadmin"` | no |
+| <a name="input_environment"></a> [environment](#input\_environment) | Deployment environment | `string` | n/a | yes |
+| <a name="input_project_name"></a> [project\_name](#input\_project\_name) | Name of the project | `string` | n/a | yes |
 
 ## Outputs
 
 | Name | Description |
-|---|---|
-| db_credentials_secret_arn | ARN of the database credentials secret |
-| db_credentials_secret_name | Name of the database credentials secret, used as the ExternalSecret key |
-| db_username | RDS master username stored in the secret |
-| grafana_password_secret_arn | ARN of the Grafana password secret |
-| jwt_secret_arn | ARN of the api-gateway JWT signing secret |
-| kms_key_arn | ARN of the KMS key used to encrypt secrets |
-
-## Local Testing
-
-The module was tested using the team's local Floci
-development environment.
-
-### Commands
-
-Run from the repository root:
-
-```bash
-./scripts/floci-local-test.sh -target=module.secrets_manager
-```
-
-```bash
-terraform -chdir=infra/terraform/local apply \
-  -target=module.secrets_manager
-```
-
-### Results
-
-- Standalone Terraform validation passed.
-- Local testing performed using Floci.
-- AWS deployment has not been tested.
-
-Note: Successful local execution does not independently
-verify that Floci supports every Secrets Manager and KMS
-operation used by this module.
-
-## Security
-
-Generated passwords use ephemeral Terraform resources
-and write-only Secrets Manager arguments.
-
-KMS key rotation is enabled.
-
-All secrets set `recovery_window_in_days = 0` so a destroy deletes them immediately and the next apply can reuse the names. That suits dev, where we deploy and destroy repeatedly. In prod, keep the default 30-day recovery window so a deleted secret can be restored.
-
-Automatic database and Grafana credential rotation
-has not been implemented and requires a team decision.
+| ---- | ----------- |
+| <a name="output_db_connection_secret_arn"></a> [db\_connection\_secret\_arn](#output\_db\_connection\_secret\_arn) | arn  of the db connection secret |
+| <a name="output_db_connection_secret_name"></a> [db\_connection\_secret\_name](#output\_db\_connection\_secret\_name) | Name of the db connection secret |
+| <a name="output_db_credentials_secret_arn"></a> [db\_credentials\_secret\_arn](#output\_db\_credentials\_secret\_arn) | ARN of the database credentials secret |
+| <a name="output_db_credentials_secret_name"></a> [db\_credentials\_secret\_name](#output\_db\_credentials\_secret\_name) | Name of the database credentials secret, used as the ExternalSecret key |
+| <a name="output_db_username"></a> [db\_username](#output\_db\_username) | postgres master username stored in the database credentials secret |
+| <a name="output_grafana_password_secret_arn"></a> [grafana\_password\_secret\_arn](#output\_grafana\_password\_secret\_arn) | ARN of the Grafana password secret |
+| <a name="output_jwt_secret_arn"></a> [jwt\_secret\_arn](#output\_jwt\_secret\_arn) | ARN of the api-gateway JWT signing secret |
+| <a name="output_kms_key_arn"></a> [kms\_key\_arn](#output\_kms\_key\_arn) | ARN of the KMS key used to encrypt secrets |
+<!-- END_TF_DOCS -->

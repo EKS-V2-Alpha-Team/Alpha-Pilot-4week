@@ -1,0 +1,7 @@
+grafana:
+  ingressRoute:
+    enabled: true
+    host: grafana.prod.eksv2.naimaosmann.com
+    tls:
+      enabled: true
+      clusterIssuer: letsencrypt-prod

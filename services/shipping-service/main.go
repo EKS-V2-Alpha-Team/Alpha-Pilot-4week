@@ -602,7 +602,7 @@ func publishEvent(eventType string, payload map[string]interface{}) {
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
 	}
 	data, _ := json.Marshal(event)
-	log.Printf("Event -> SQS: %s", string(data))
+	log.Printf("Event (logged only): %s", string(data))
 }
 
 func httpError(w http.ResponseWriter, msg string, code int) {

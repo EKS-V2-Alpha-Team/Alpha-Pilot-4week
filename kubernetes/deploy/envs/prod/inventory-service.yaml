@@ -1,0 +1,8 @@
+# inventory-service in prod.
+image:
+  tag: inventory-service-0aedbc78
+
+replicaCount: 1
+
+env:
+  SEED_DEMO_PRODUCTS: "false"

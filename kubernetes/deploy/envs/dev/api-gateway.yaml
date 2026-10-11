@@ -1,6 +1,6 @@
 # api-gateway in dev.
 image:
-  tag: api-gateway-0aedbc78
+  tag: api-gateway-9dcea27c
 
 # 2 pods in dev so the PDB and zero-downtime rollouts are actually exercised.
 replicaCount: 2

@@ -2,8 +2,9 @@
 image:
   tag: api-gateway-0aedbc78
 
-# Two replicas to test availability and rolling updates.
-replicaCount: 2
+autoscaling:
+  minReplicas: 3
+  maxReplicas: 5
 
 env:
   # Trust forwarded IP headers only from within the VPC.
@@ -19,4 +20,3 @@ ingressRoute:
   host: dashboard.staging.eksv2.naimaosmann.com
   tls:
     clusterIssuer: letsencrypt-staging
-

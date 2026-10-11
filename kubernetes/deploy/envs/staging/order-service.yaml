@@ -2,7 +2,9 @@
 image:
   tag: order-service-0aedbc78
 
-replicaCount: 1
+autoscaling:
+  minReplicas: 3
+  maxReplicas: 5
 
 env:
   SQS_QUEUE_URL: https://sqs.eu-west-2.amazonaws.com/751501311900/eks-v2-staging-order-events

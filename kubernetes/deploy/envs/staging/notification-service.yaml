@@ -2,5 +2,6 @@
 image:
   tag: notification-service-0aedbc78
 
-replicaCount: 1
-
+autoscaling:
+  minReplicas: 3
+  maxReplicas: 5

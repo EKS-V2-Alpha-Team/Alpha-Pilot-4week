@@ -1,0 +1,207 @@
+name: Promote
+
+# Copies the image tags one environment runs to the next one (dev -> staging, staging -> prod)
+# and opens a pull request. Nothing is rebuilt: the next environment runs the exact image
+# that was tested. Merging the PR deploys it (staging auto-syncs; prod is synced by hand in ArgoCD).
+on:
+  workflow_dispatch:
+    inputs:
+      from:
+        description: "Copy the tags from"
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+      to:
+        description: "Into"
+        required: true
+        type: choice
+        options:
+          - staging
+          - prod
+      services:
+        description: "Services, comma-separated (e.g. order-service,worker), or all"
+        required: true
+        default: all
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+# Runs into the same environment wait for each other. A run also stops if a promotion PR
+# for that environment is still open (first check below), so two PRs never edit the same tags.
+concurrency:
+  group: promote-${{ inputs.to }}
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: Promote ${{ inputs.from }} -> ${{ inputs.to }}
+    runs-on: ubuntu-latest
+
+    steps:
+      # Promotions start from main, the only branch the environments deploy from.
+      # A failing step (not a job-level if:) so a run from another branch says why it stopped.
+      - name: Check this runs from main
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          if [ "$REF" != "refs/heads/main" ]; then
+            echo "::error::Promote must be run from main (this run is from $REF). Pick main in 'Use workflow from'."
+            exit 1
+          fi
+
+      - name: Check the environments are in order
+        env:
+          FROM: ${{ inputs.from }}
+          TO: ${{ inputs.to }}
+        run: |
+          case "$FROM->$TO" in
+            "dev->staging"|"staging->prod") echo "Promoting $FROM -> $TO" ;;
+            *) echo "::error::Only dev -> staging and staging -> prod are allowed, so prod only gets what staging tested"; exit 1 ;;
+          esac
+
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: Checkout Repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: main
+          token: ${{ steps.app-token.outputs.token }}
+
+      # The image build role: it can only read and push images in the shared ECR repo.
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6
+        with:
+          role-to-assume: ${{ vars.AWS_ECR_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Stop if a promotion to this environment is already open
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TO: ${{ inputs.to }}
+        run: |
+          open=$(gh pr list --state open --json number,headRefName --jq "[.[] | select(.headRefName | startswith(\"promote/${TO}-\")) | \"#\(.number)\"] | join(\", \")")
+          if [ -n "$open" ]; then
+            echo "::error::A promotion to $TO is already open ($open). Merge or close it first."
+            exit 1
+          fi
+
+      - name: Copy the tags
+        id: copy
+        env:
+          FROM: ${{ inputs.from }}
+          TO: ${{ inputs.to }}
+          SERVICES: ${{ inputs.services }}
+          REPOSITORY: ${{ secrets.AWS_ECR_REPO }}
+        run: |
+          if [ "$SERVICES" = "all" ]; then
+            services=$(ls kubernetes/deploy/services)
+          else
+            services=$(echo "$SERVICES" | tr ',' ' ')
+          fi
+
+          table="| Service | ${TO} now | Promoted tag (from ${FROM}) |"$'\n'"|---|---|---|"
+          changed=0
+          for svc in $services; do
+            if ! [[ "$svc" =~ ^[a-z0-9-]+$ ]]; then
+              echo "::error::'$svc' isn't a service name"
+              exit 1
+            fi
+            src="kubernetes/deploy/envs/${FROM}/${svc}.yaml"
+            dst="kubernetes/deploy/envs/${TO}/${svc}.yaml"
+            if [ ! -f "$src" ] || [ ! -f "$dst" ]; then
+              echo "::error::Unknown service '$svc' (no $src or $dst)"
+              exit 1
+            fi
+
+            new_tag=$(sed -n -E 's/^  tag: *//p' "$src")
+            old_tag=$(sed -n -E 's/^  tag: *//p' "$dst")
+            if [ -z "$new_tag" ]; then
+              echo "::error::No image tag found in $src"
+              exit 1
+            fi
+            # Exactly one <svc>-<sha> tag, so a second tag: line or another service's tag is never promoted.
+            if ! [[ "$new_tag" =~ ^${svc}-[0-9a-f]{8}$ ]]; then
+              echo "::error::Tag in $src isn't a single ${svc}-<8-char sha> tag: $new_tag"
+              exit 1
+            fi
+            if [ "$new_tag" = "$old_tag" ]; then
+              echo "$svc: already on $new_tag, skipping"
+              continue
+            fi
+
+            # Never promote a tag the next environment couldn't pull.
+            if ! out=$(aws ecr describe-images --repository-name "$REPOSITORY" --image-ids imageTag="$new_tag" 2>&1 >/dev/null); then
+              if grep -q ImageNotFoundException <<<"$out"; then
+                echo "::error::$new_tag is not in ECR, so $TO couldn't pull it"
+              else
+                echo "::error::Couldn't check $new_tag in ECR: $out"
+              fi
+              exit 1
+            fi
+
+            sed -i -E "s|^(  tag: ).*|\1${new_tag}|" "$dst"
+            echo "$svc: $old_tag -> $new_tag"
+            table+=$'\n'"| \`$svc\` | \`$old_tag\` | \`$new_tag\` |"
+            changed=$((changed + 1))
+          done
+
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+          {
+            echo "table<<EOF"
+            echo "$table"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open the promotion pull request
+        if: steps.copy.outputs.changed != '0'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          FROM: ${{ inputs.from }}
+          TO: ${{ inputs.to }}
+          CHANGED: ${{ steps.copy.outputs.changed }}
+          TABLE: ${{ steps.copy.outputs.table }}
+        run: |
+          branch="promote/${TO}-${GITHUB_RUN_ID}"
+          title="chore(deploy): promote ${CHANGED} service(s) ${FROM} -> ${TO}"
+          if [ "$TO" = "prod" ]; then
+            after="After merging, sync each changed \`<svc>-prod\` Application in ArgoCD: prod services don't auto-sync."
+          else
+            after="Staging auto-syncs after merging. Check \`kubectl -n argocd get applications\` shows them Synced and Healthy."
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git commit -am "$title"
+          git push origin "$branch"
+
+          body=$(printf '%s\n\n%s\n\n%s\n\n%s\n' \
+            "Promotes the images ${FROM} is running to ${TO}. Same images, no rebuild." \
+            "$TABLE" \
+            "$after" \
+            "To roll back one service later, revert its line in \`kubernetes/deploy/envs/${TO}/<svc>.yaml\` (or revert this PR for all of them).")
+          url=$(gh pr create --base main --head "$branch" --title "$title" --body "$body")
+
+          echo "Opened $url"
+          {
+            echo "## Promotion ${FROM} -> ${TO}"
+            echo "$TABLE"
+            echo
+            echo "Pull request: $url"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Nothing to promote
+        if: steps.copy.outputs.changed == '0'
+        env:
+          FROM: ${{ inputs.from }}
+          TO: ${{ inputs.to }}
+        run: echo "$TO already runs the same tags as $FROM for these services" >> "$GITHUB_STEP_SUMMARY"

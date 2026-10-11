@@ -9,7 +9,7 @@ docker compose up -d --build
 docker compose ps          # everything should say Up
 ```
 
-Open http://localhost:8080 (not 8086) and log in with any email and password. Place an order: it should show `confirmed` within about 5 seconds.
+Open http://localhost:8080 (not 8086). The page signs itself in as `admin@platform.local`. Add parts to a kit and place the order: it should show `confirmed` within about 5 seconds. How the page is designed and built: [dashboard-api/DESIGN.md](dashboard-api/DESIGN.md).
 
 Local AWS is Floci on port 4566. It creates the `order-events` queue and its DLQ at start. If an order sits at `pending`, run `docker compose restart worker order-service`.
 

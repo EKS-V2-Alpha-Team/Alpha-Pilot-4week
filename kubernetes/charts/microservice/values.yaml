@@ -132,12 +132,16 @@ startupProbe:
   failureThreshold: 30
 
 strategy:
-  # -- RollingUpdate or Recreate (forced to Recreate when singleton: true).
-  type: RollingUpdate
+  # -- Services use canary (Argo Rollouts); the scheduler (singleton: true) uses Recreate.
   rollingUpdate:
     maxSurge: 1
     # -- 0 = never drop below desired capacity during a rollout.
     maxUnavailable: 0
+
+# -- Run the Prometheus canary analysis (error rate, P95 latency) before promoting.
+# Set false where Prometheus isn't available (local kind).
+analysis:
+  enabled: true
 
 # -- Rollout is marked failed after this many seconds (ArgoCD shows Degraded).
 progressDeadlineSeconds: 300

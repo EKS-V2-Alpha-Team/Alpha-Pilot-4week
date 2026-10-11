@@ -31,3 +31,5 @@ resources:
     memory: 64Mi
   limits:
     memory: 128Mi
+analysis:
+  enabled: true

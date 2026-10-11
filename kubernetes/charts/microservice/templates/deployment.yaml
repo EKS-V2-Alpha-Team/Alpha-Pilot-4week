@@ -33,6 +33,7 @@ spec:
       maxUnavailable: {{ .Values.strategy.rollingUpdate.maxUnavailable }}
       steps:
         - setWeight: 50 # configured 50 and not 20 as we do not have enough replicas to achieve a 20% split
+        {{- if .Values.analysis.enabled }}
         - analysis:
             templates:
               - templateName: {{ include "microservice.fullname" . }}-analysis
@@ -40,6 +41,7 @@ spec:
               - name: canary-hash
                 valueFrom:
                   podTemplateHashValue: Latest
+        {{- end }}
         - setWeight: 100
     {{- end }}
   selector:

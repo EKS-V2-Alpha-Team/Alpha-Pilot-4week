@@ -1,4 +1,4 @@
-{{- if not .Values.singleton }}
+{{- if and (not .Values.singleton) .Values.analysis.enabled }}
 apiVersion: argoproj.io/v1alpha1
 kind: AnalysisTemplate
 metadata:

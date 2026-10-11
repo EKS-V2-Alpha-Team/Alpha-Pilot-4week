@@ -14,8 +14,9 @@ An e-commerce order fulfillment platform made up of nine Go microservices, deplo
 2. [Architecture Diagram](#architecture-diagram)
 3. [Request Flow](#request-flow)
 4. [Deployment Process](#deployment-process)
-5. [Directory Structure](#directory-structure)
-6. [Local Setup](#local-setup)
+5. [Promote and Roll Back](#promote-and-roll-back)
+6. [Directory Structure](#directory-structure)
+7. [Local Setup](#local-setup)
 
 ---
 
@@ -80,6 +81,35 @@ The reasoning and trade-offs behind these choices are in [ARCHITECTURE.md](ARCHI
 4. **Release images**: on merge to `main`, each changed service's image is pushed to ECR, tagged with the commit SHA. The pipeline then commits the new tag to the dev values file in Git.
 5. **Deploy with GitOps**: ArgoCD sees the new tag in Git and rolls it out with a rolling update. No pipeline deploys to the cluster directly, and a rollback is a revert of the tag commit.
 6. **Tear down**: Terraform Destroy asks for the environment and for its name typed again. Prod also waits for an approval, and its database has deletion protection on, so turn that off with an apply first.
+
+---
+
+## Promote and Roll Back
+
+Images are built once, on merge to `main`, and only dev gets the new tag automatically. Staging and prod run whatever tag is in `kubernetes/deploy/envs/<env>/<svc>.yaml`, and moving a release forward means copying the tag that was tested, never rebuilding.
+
+| Environment | How a new tag gets there | Deploys after merge |
+|---|---|---|
+| dev | CI commits it on every merge to `main` | Automatically |
+| staging | **Promote** workflow, dev → staging, through a pull request | Automatically (ArgoCD auto-sync) |
+| prod | **Promote** workflow, staging → prod, through a pull request that needs approval | When someone syncs the `<svc>-prod` Application in ArgoCD |
+
+**Promote**
+
+1. Check the release works in the environment it's coming from (dev or staging).
+2. Actions → **Promote** → run on `main` with `from`, `to` and `services` (`all`, or a list such as `order-service,worker`). Only dev → staging and staging → prod are allowed.
+3. The workflow checks each image exists in ECR, copies the tags and opens a pull request listing every service's old and new tag. Services already on the same tag are skipped.
+4. Review and merge the pull request. For prod, sync each changed `<svc>-prod` Application in ArgoCD afterwards.
+
+**Roll back one service**
+
+Revert the commit that changed that service's tag (for dev, the `chore(deploy): point dev at …` commit; for staging or prod, the promotion pull request, or just that service's line in it). ArgoCD redeploys the previous image for that service only; the image is still in ECR, so nothing is rebuilt. In prod, sync the Application after the revert merges. Don't use `kubectl rollout undo` or edit the Deployment: ArgoCD's self-heal puts the Git version straight back.
+
+**See what each environment runs**
+
+```bash
+for f in kubernetes/deploy/envs/dev/*.yaml; do svc=$(basename "$f" .yaml); [ "$svc" = common ] && continue; printf '%-22s' "$svc"; for e in dev staging prod; do printf '%-34s' "$(sed -n 's/^  tag: *//p' kubernetes/deploy/envs/$e/$svc.yaml)"; done; echo; done
+```
 
 ---
 

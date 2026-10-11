@@ -1,0 +1,61 @@
+# Runs load.js as a Job inside the cluster, so the laptop and the home network are not the limit.
+# Traffic still goes to the public dev URL (through the ALB and Traefik), not straight to a pod.
+# Needs budget: the pod asks for 2 CPU and 4Gi, so Karpenter may add a node for it.
+# Usage: see "Needs more budget" in README.md.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k6-${RUN_ID}
+  namespace: order-platform
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 12345
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: k6
+          image: grafana/k6:2.3.0
+          args:
+            - run
+            - -e
+            - TEST=${TEST}
+            - -e
+            - RUN_ID=${RUN_ID}
+            - -e
+            - RATE=${RATE}
+            - -e
+            - HOLD=${HOLD}
+            - --insecure-skip-tls-verify
+            - /script/load.js
+          env:
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: k6-jwt
+                  key: JWT_SECRET
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: "2"
+              memory: 4Gi
+            limits:
+              memory: 6Gi
+          volumeMounts:
+            - name: script
+              mountPath: /script
+      volumes:
+        - name: script
+          configMap:
+            name: k6-load

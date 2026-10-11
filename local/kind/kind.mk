@@ -36,6 +36,10 @@ METRICS_SERVER_VERSION ?= $(call argo_version,metrics-server)
 TRAEFIK_REPO      := https://traefik.github.io/charts
 TRAEFIK_VERSION   ?= $(call argo_version,traefik)
 
+# Argo Rollouts: same chart version as the ArgoCD app, so kind matches the cloud envs.
+ARGO_ROLLOUTS_REPO    := https://argoproj.github.io/argo-helm
+ARGO_ROLLOUTS_VERSION ?= $(call argo_version,argo-rollouts)
+
 FLOCI_INIT        ?= scripts/floci-init.sh
 VALUES_KIND       := $(KIND_DIR)/values-kind.yaml
 
@@ -58,7 +62,8 @@ _helm-values = \
   --set image.tag=$(1)-local
 
 # Kubernetes resources that must not appear in kind-rendered manifests.
-KIND_FORBIDDEN := ExternalSecret|Certificate|ServiceMonitor
+# AnalysisTemplate: kind has no Prometheus, so canary analysis must stay off (analysis.enabled: false).
+KIND_FORBIDDEN := ExternalSecret|Certificate|ServiceMonitor|AnalysisTemplate
 
 .PHONY: kind-help kind-check kind-up kind-down kind-clean kind-load kind-platform \
         kind-render kind-build kind-deploy kind-status kind-all _kind-guard _kind-env
@@ -119,6 +124,7 @@ kind-load: _kind-guard ## Load built images into the cluster
 kind-platform: _kind-guard ## Install local platform dependencies
 	@test -n "$(TRAEFIK_VERSION)" || { echo "could not read Traefik version from $(APPS_DIR)"; exit 1; }
 	@test -n "$(METRICS_SERVER_VERSION)" || { echo "could not read metrics-server version from $(APPS_DIR)"; exit 1; }
+	@test -n "$(ARGO_ROLLOUTS_VERSION)" || { echo "could not read Argo Rollouts version from $(APPS_DIR)"; exit 1; }
 	@test -f $(FLOCI_INIT) || { echo "missing $(FLOCI_INIT) (floci init script)"; exit 1; }
 	kubectl create namespace $(NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
 # Apply kind-specific stand-ins for AWS-managed resources.
@@ -137,6 +143,10 @@ kind-platform: _kind-guard ## Install local platform dependencies
 	  --repo $(TRAEFIK_REPO) --version $(TRAEFIK_VERSION) \
 	  --namespace traefik --create-namespace \
 	  -f $(HELM_VALUES_DIR)/traefik-values.yaml -f $(KIND_DIR)/traefik-values.yaml
+# Argo Rollouts controller + CRDs: the services render as Rollouts, so this must exist before kind-deploy.
+	helm upgrade --install argo-rollouts argo-rollouts \
+	  --repo $(ARGO_ROLLOUTS_REPO) --version $(ARGO_ROLLOUTS_VERSION) \
+	  --namespace argo-rollouts --create-namespace --wait
 	@set -e; for app in $(KIND_PLATFORM); do \
 	  dir=$(PLATFORM_DIR)/$$app; \
 	  echo "==> $$app"; \
@@ -180,11 +190,18 @@ kind-deploy: _kind-guard _kind-env  ## Deploy SERVICES for one ENV at a time (EN
 	    --namespace $(NAMESPACE) --create-namespace \
 	    $(call _helm-values,$(svc),$(ENV)) \
 	    --wait --timeout 5m;)
+# helm --wait does not track Argo Rollouts, so wait for each Rollout to report Healthy.
+# The scheduler is still a Deployment and is covered by helm --wait above.
+	@echo "==> waiting for rollouts"
+	@set -e; for r in $$(kubectl get rollouts.argoproj.io -n $(NAMESPACE) -o name); do \
+	  kubectl wait $$r -n $(NAMESPACE) --for=jsonpath='{.status.phase}'=Healthy --timeout=300s; \
+	done
 
 kind-status: _kind-guard ## Show nodes, releases and pods
 	kubectl get nodes
 	helm list -n $(NAMESPACE)
 	kubectl get pods -n $(NAMESPACE) -o wide
+	kubectl get rollouts.argoproj.io -n $(NAMESPACE)
 
 kind-all: kind-up kind-platform kind-build kind-load kind-deploy ## Run the full local workflow
 

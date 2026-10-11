@@ -18,6 +18,8 @@ ingressRoute:
   tls:
     enabled: false
 
+analysis:
+  enabled: false
 
 env:
   DATABASE_URL: "postgres://app:localdev@postgres:5432/orders?sslmode=disable" # checkov:skip=CKV_SECRET_4: throwaway local kind credentials, same as docker-compose.yml

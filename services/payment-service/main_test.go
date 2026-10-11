@@ -35,7 +35,7 @@ func setupTestDB(t *testing.T) {
 	}
 	warmPool(t, 20)
 	migrate()
-	if _, err := db.Exec(`TRUNCATE ledger_entries, payments RESTART IDENTITY CASCADE`); err != nil {
+	if _, err := db.Exec(`TRUNCATE ledger_entries, payments, payment_idempotency_keys RESTART IDENTITY CASCADE`); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 	// Make the simulated provider deterministic; tests that need a failure override it.

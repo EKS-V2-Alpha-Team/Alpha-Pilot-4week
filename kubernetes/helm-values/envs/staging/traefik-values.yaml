@@ -1,0 +1,5 @@
+service:
+  annotations:
+    # ExternalDNS (service source) points this name at the NLB. Must equal the
+    # api-gateway ingressRoute.host in kubernetes/deploy/envs/staging/api-gateway.yaml.
+    external-dns.alpha.kubernetes.io/hostname: dashboard.staging.eksv2.naimaosmann.com

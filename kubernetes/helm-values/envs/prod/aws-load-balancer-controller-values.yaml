@@ -1,0 +1,6 @@
+clusterName: eks-v2-prod-cluster
+# Set explicitly so the controller doesn't depend on the node metadata service.
+# Every environment's VPC is named eks-v2-vpc; the Environment tag (provider default_tags) tells them apart.
+vpcTags:
+  Name: eks-v2-vpc
+  Environment: prod

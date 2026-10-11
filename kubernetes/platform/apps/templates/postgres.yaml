@@ -1,0 +1,28 @@
+{{- /* In-cluster Postgres is dev only: staging and prod use RDS. */}}
+{{- if eq .Values.environment "dev" }}
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+
+metadata:
+  name: postgres
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+
+spec:
+  project: default
+
+  source:
+    repoURL: git@github.com:EKS-V2-Alpha-Team/Alpha-Pilot-4week.git
+    targetRevision: main
+    path: kubernetes/platform/postgres
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: order-platform
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+{{- end }}

@@ -1,5 +1,5 @@
 locals {
-  root_app = yamldecode(file("${path.module}/../../kubernetes/platform/root-app.yaml"))
+  root_app = yamldecode(file("${path.module}/../../kubernetes/platform/root-app-${var.environment}.yaml"))
 }
 
 # Same name the eks module gives the cluster in infra/terraform.
@@ -45,7 +45,7 @@ resource "kubernetes_secret_v1" "repo" {
   data_wo_revision = var.deploy_key_version
 }
 
-# Root app-of-apps, read from kubernetes/platform/root-app.yaml
+# Root app-of-apps, read from kubernetes/platform/root-app-${var.environment}.yaml
 resource "helm_release" "root_app" {
   name       = "argocd-root-app"
   repository = "https://argoproj.github.io/argo-helm"

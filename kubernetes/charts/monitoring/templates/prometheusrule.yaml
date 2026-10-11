@@ -1,0 +1,9 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: order-platform-alerts
+  labels:
+    # Prometheus only loads rules with this label
+    release: prometheus
+spec:
+{{ .Files.Get "alerts/app-alerts.yaml" | indent 2 }}

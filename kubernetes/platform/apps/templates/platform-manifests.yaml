@@ -1,0 +1,24 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-manifests
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+spec:
+  project: default
+  # Shared manifests, plus the ones that name this environment (node role, secret names).
+  sources:
+    - repoURL: git@github.com:EKS-V2-Alpha-Team/Alpha-Pilot-4week.git
+      targetRevision: main
+      path: kubernetes/platform/manifests
+    - repoURL: git@github.com:EKS-V2-Alpha-Team/Alpha-Pilot-4week.git
+      targetRevision: main
+      path: kubernetes/platform/manifests/envs/{{ .Values.environment }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

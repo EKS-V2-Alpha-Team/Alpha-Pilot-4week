@@ -282,7 +282,8 @@ func processNewOrder(client *http.Client, services map[string]string, o newOrder
 		return fmt.Errorf("reserve: unexpected status %d", code)
 	}
 
-	code, err = sendJSON(client, http.MethodPost, services["payment"]+"/charge", map[string]interface{}{
+	// Same key on every retry, so payment replays the first answer.
+	code, err = sendJSONWithKey(client, http.MethodPost, services["payment"]+"/charge", chargeKey(o.OrderID), map[string]interface{}{
 		"order_id":    o.OrderID,
 		"customer_id": o.CustomerID,
 		"amount":      o.Total,
@@ -573,9 +574,21 @@ func sendJSON(client *http.Client, method, url string, body interface{}) (int, e
 	return doJSON(client, method, url, body, nil)
 }
 
+// chargeKey is the Idempotency-Key for an order's charge: the same for every retry.
+func chargeKey(orderID int) string { return fmt.Sprintf("charge-order-%d", orderID) }
+
+// sendJSONWithKey is sendJSON with an Idempotency-Key header.
+func sendJSONWithKey(client *http.Client, method, url, key string, body interface{}) (int, error) {
+	return doRequest(client, method, url, map[string]string{"Idempotency-Key": key}, body, nil)
+}
+
 // doJSON is sendJSON that also decodes a JSON response into out (when out is not nil
 // and the response is 200). A response that can't be decoded leaves out empty.
 func doJSON(client *http.Client, method, url string, body interface{}, out interface{}) (int, error) {
+	return doRequest(client, method, url, nil, body, out)
+}
+
+func doRequest(client *http.Client, method, url string, headers map[string]string, body interface{}, out interface{}) (int, error) {
 	b, err := json.Marshal(body)
 	if err != nil {
 		return 0, err
@@ -585,6 +598,9 @@ func doJSON(client *http.Client, method, url string, body interface{}, out inter
 		return 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return 0, err

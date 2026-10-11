@@ -1,0 +1,5 @@
+# payment-service in prod.
+image:
+  tag: payment-service-0aedbc78
+
+replicaCount: 1

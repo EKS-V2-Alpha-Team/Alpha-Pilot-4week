@@ -1,0 +1,2 @@
+# Marks the DNS records this cluster owns. Changing it orphans the records it already created.
+txtOwnerId: eks-v2-prod-cluster

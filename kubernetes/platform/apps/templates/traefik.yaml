@@ -1,0 +1,30 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: traefik
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: traefik
+  sources:
+    - repoURL: https://traefik.github.io/charts
+      chart: traefik
+      targetRevision: 41.6.0
+      helm:
+        releaseName: traefik
+        valueFiles:
+          - $values/kubernetes/helm-values/traefik-values.yaml
+          - $values/kubernetes/helm-values/envs/{{ .Values.environment }}/traefik-values.yaml
+    - repoURL: git@github.com:EKS-V2-Alpha-Team/Alpha-Pilot-4week.git
+      targetRevision: main
+      ref: values
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

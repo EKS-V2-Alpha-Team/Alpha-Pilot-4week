@@ -1,0 +1,4 @@
+# Set by each root app (kubernetes/platform/root-app-<env>.yaml).
+# Picks helm-values/envs/<env>/, platform/manifests/envs/<env>/ and deploy/envs/<env>/.
+# Defaults to dev so a root app without helm values renders exactly what dev ran before.
+environment: dev

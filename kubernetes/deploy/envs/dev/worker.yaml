@@ -1,6 +1,6 @@
 # worker in dev.
 image:
-  tag: worker-cc4565f8
+  tag: worker-9dcea27c
 
 replicaCount: 1
 

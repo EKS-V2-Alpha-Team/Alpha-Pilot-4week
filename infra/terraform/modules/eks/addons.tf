@@ -37,3 +37,12 @@ resource "aws_eks_addon" "ebs_csi" {
     aws_iam_role_policy_attachment.ebs_csi_AmazonEBSCSIDriverPolicy,
   ]
 }
+
+# Installs the VolumeSnapshot CRDs and the controller that turns a VolumeSnapshot into an
+# EBS snapshot (through the EBS CSI driver above). Needed before any VolumeSnapshotClass syncs.
+resource "aws_eks_addon" "snapshot_controller" {
+  cluster_name = aws_eks_cluster.this.name
+  addon_name   = "snapshot-controller"
+
+  depends_on = [aws_eks_node_group.this]
+}

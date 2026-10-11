@@ -67,9 +67,50 @@ ArgoCD undoes manual scaling, so do it through Git: set `replicaCount: 2` in `ku
 
 Start `l1` with `-e HOLD=10m`, then in another window: `kubectl delete pod -n order-platform -l app.kubernetes.io/name=worker`. Repeat with `order-service`. Expect a short blip, then recovery, and `checks.sql` still clean. Do not delete the Postgres pod without telling the team first.
 
+## Needs more budget (optional)
+
+These are written so we can run them if we get a bit of budget. They are not part of the ALPHA-80 campaign. `failover` cannot run on dev (no Multi-AZ database). `scale` and the Job can, but they cost real money.
+
+| Order | `TEST=` | What it does | Time | Pass means |
+|---|---|---|---|---|
+| A | `failover` | L1 load (15 RPS) for 10 min while you force the database to fail over to its standby, then 2 min of normal load. | 15 min | The 2 minutes after the load ends have no errors and p95 < 500 ms. `checks.sql` is clean, so no order was lost. Write down how long errors lasted (Grafana). |
+| B | `scale` | Steps the rate up to `RATE` (default 1,500) in five steps, 3 min each: 150 (10k users), 375 (25k), 750 (50k), 1,125 (75k), 1,500 (100k). | 21 min | L2 limits hold at each step. The first step where they break is the ceiling. |
+| C | any test, as a Job in the cluster | Runs k6 inside the cluster, so the laptop and the home network are not the limit. Traffic still goes to the public dev URL. | same as the test | Same as the test it runs. Use it for `scale`. |
+
+User counts use the L1 rate per user: 1,000 users is 15 RPS.
+
+**A. `failover`.** Needs a Multi-AZ RDS instance. Dev uses Postgres inside the cluster, so it cannot run there. Use the staging or prod stack once it exists, and tell the team first: AWS says even a failover reboot causes a short outage. The test creates `lt-` products in that environment.
+
+```bash
+export JWT_SECRET=$(aws secretsmanager get-secret-value --secret-id <that-env-jwt-secret> --query SecretString --output text --region eu-west-2 --no-cli-pager)
+k6 run -e TEST=failover -e RUN_ID=f1a -e BASE_URL=https://<that-env-dashboard-host> -e ALLOW_NON_DEV=yes --insecure-skip-tls-verify tests/load/load.js
+
+# about 5 minutes in, in a second terminal
+aws rds reboot-db-instance --db-instance-identifier <db-id> --force-failover --region eu-west-2 --no-cli-pager
+```
+
+Errors during the failover are expected, so k6 only judges the 2 minutes after the load ends. The exit code says whether the system recovered. It does not say how long the pause was, so note the time you ran the command and read the error window off Grafana.
+
+**B. `scale`.** Run it as C unless the machine is strong. At 1,500 RPS Karpenter will add nodes and the database will take the load, so check month-to-date spend first (the cap is $200). It is meant to find where the system bends, so a red cross at the top steps is a result. k6 aborts on its own if more than half the requests fail. Lower the top with `-e RATE=750`. Change the step length with `-e STEP=5m`.
+
+**C. In the cluster.** Run from the repo root with the dev cluster as the current `kubectl` context.
+
+```bash
+export TEST=scale RUN_ID=s1a RATE=1500 HOLD=
+kubectl -n order-platform create configmap k6-load --from-file=tests/load/load.js
+kubectl -n order-platform create secret generic k6-jwt --from-literal=JWT_SECRET="$JWT_SECRET"
+envsubst '$TEST $RUN_ID $RATE $HOLD' < tests/load/k6-job.yaml | kubectl apply -f -
+kubectl -n order-platform logs -f job/k6-$RUN_ID      # the k6 summary is at the end of the log
+
+# when done
+kubectl -n order-platform delete job/k6-$RUN_ID configmap/k6-load secret/k6-jwt
+```
+
+The Job asks for 2 CPU and 4Gi, so Karpenter may add a node. Raise the memory in `k6-job.yaml` for the top steps of `scale` (each virtual user costs memory). Run `TEST=preflight` through the Job first to confirm it works. `envsubst` is in the `gettext-base` package if it is missing.
+
 ## Notes
 
 - Test data is prefixed `lt-` (products named "[load-test] ..."). It stays in dev; it does not affect real data. Each run only reads its own orders, so use a new `RUN_ID` every time.
 - Run from a stable wired connection. If k6 reports `dropped_iterations`, the machine or network could not keep up, so the result is not valid. Lower `-e RATE` and say so.
 - Costs: no new AWS resources. Short runs only add a little transfer and CPU on the existing nodes.
-- Not covered (documented, needs more budget): multi-AZ failover, 10k to 100k users, separate load generator in the cluster.
+- Not covered even there: a distributed generator (several k6 pods working as one run), and a CDN or WAF in the path.

@@ -119,6 +119,34 @@ const RATE_L1 = Number(__ENV.RATE || 15);
 const RATE_L2 = Number(__ENV.RATE || 150);
 const TOTAL_L1 = toSeconds(RAMP) + toSeconds(HOLD) + toSeconds(DOWN);
 
+// Needs budget: failover and scale are not part of the dev campaign (see README).
+const FAILOVER_HOLD = __ENV.HOLD || '10m';
+const TOTAL_FAILOVER = toSeconds(RAMP) + toSeconds(FAILOVER_HOLD) + toSeconds(DOWN);
+const RATE_SCALE = Number(__ENV.RATE || 1500);
+const STEP = __ENV.STEP || '3m';
+
+// 10%, 25%, 50%, 75% and 100% of RATE, each held for STEP. At the L1 rate per user
+// (1,000 users = 15 RPS) the default RATE of 1500 is 100k users and the first step is 10k.
+function stairs(rate, mix) {
+  const stages = [];
+  [0.1, 0.25, 0.5, 0.75, 1].forEach((share) => {
+    const target = Math.round(rate * share);
+    stages.push({ duration: '1m', target: target });
+    stages.push({ duration: STEP, target: target });
+  });
+  stages.push({ duration: DOWN, target: 0 });
+  return {
+    executor: 'ramping-arrival-rate',
+    startRate: 1,
+    timeUnit: '1s',
+    preAllocatedVUs: Math.max(20, rate),
+    maxVUs: Math.max(100, rate * 3),
+    stages: stages,
+    exec: 'shopper',
+    env: { MIX: mix, HOT_SHARE: '0' },
+  };
+}
+
 const TESTS = {
   preflight: {
     scenarios: { preflight: once('preflight', 1, '3m') },
@@ -173,6 +201,35 @@ const TESTS = {
       'http_req_failed{scenario:recovery}': ['rate<0.001'],
       'http_req_duration{scenario:recovery}': ['p(95)<500'],
     },
+  },
+  // Run while the database fails over to its standby (Multi-AZ RDS, staging or prod).
+  // Errors during the failover are expected, so only the two minutes after the load
+  // ends are judged. The recovery scenario starts when the load scenario has finished.
+  failover: {
+    scenarios: {
+      failover: ramp(RATE_L1, 'normal', 0, FAILOVER_HOLD),
+      recovery: {
+        executor: 'constant-arrival-rate',
+        rate: 15,
+        timeUnit: '1s',
+        duration: '2m',
+        startTime: TOTAL_FAILOVER + 's',
+        preAllocatedVUs: 50,
+        maxVUs: 200,
+        exec: 'shopper',
+        env: { MIX: 'normal', HOT_SHARE: '0' },
+      },
+    },
+    thresholds: {
+      'checks{scenario:recovery}': ['rate>0.999'],
+      'http_req_failed{scenario:recovery}': ['rate<0.001'],
+      'http_req_duration{scenario:recovery}': ['p(95)<500'],
+    },
+  },
+  // Step the arrival rate up to RATE to find where latency bends. Judged against the L2 limits.
+  scale: {
+    scenarios: { scale: stairs(RATE_SCALE, 'normal') },
+    thresholds: thresholdsFor('L2'),
   },
   dashboard: {
     scenarios: {
@@ -311,7 +368,7 @@ export function setup() {
   }
 
   const orders = [];
-  if (['l1', 'l2', 'hot', 'soak', 'spike', 'dashboard'].indexOf(TEST) !== -1) {
+  if (['l1', 'l2', 'hot', 'soak', 'spike', 'failover', 'scale', 'dashboard'].indexOf(TEST) !== -1) {
     for (let i = 1; i <= LOOKUP_ORDERS; i++) {
       const s = sub('lookup' + i);
       const r = call('POST', '/api/orders/', s, 'setup', { items: [{ product_id: SPREAD[i], quantity: 1 }] }, { key: RUN + '-setup-' + i });

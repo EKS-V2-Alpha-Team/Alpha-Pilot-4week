@@ -30,7 +30,8 @@ permissions:
   id-token: write
   contents: read
 
-# One promotion per target environment at a time, so two PRs don't edit the same files.
+# Runs into the same environment wait for each other. A run also stops if a promotion PR
+# for that environment is still open (first check below), so two PRs never edit the same tags.
 concurrency:
   group: promote-${{ inputs.to }}
   cancel-in-progress: false
@@ -39,10 +40,19 @@ jobs:
   promote:
     name: Promote ${{ inputs.from }} -> ${{ inputs.to }}
     runs-on: ubuntu-latest
-    # Promotions start from main, the only branch the environments deploy from.
-    if: github.ref == 'refs/heads/main'
 
     steps:
+      # Promotions start from main, the only branch the environments deploy from.
+      # A failing step (not a job-level if:) so a run from another branch says why it stopped.
+      - name: Check this runs from main
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          if [ "$REF" != "refs/heads/main" ]; then
+            echo "::error::Promote must be run from main (this run is from $REF). Pick main in 'Use workflow from'."
+            exit 1
+          fi
+
       - name: Check the environments are in order
         env:
           FROM: ${{ inputs.from }}
@@ -72,6 +82,17 @@ jobs:
         with:
           role-to-assume: ${{ vars.AWS_ECR_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Stop if a promotion to this environment is already open
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TO: ${{ inputs.to }}
+        run: |
+          open=$(gh pr list --state open --json number,headRefName --jq "[.[] | select(.headRefName | startswith(\"promote/${TO}-\")) | \"#\(.number)\"] | join(\", \")")
+          if [ -n "$open" ]; then
+            echo "::error::A promotion to $TO is already open ($open). Merge or close it first."
+            exit 1
+          fi
 
       - name: Copy the tags
         id: copy
@@ -107,14 +128,23 @@ jobs:
               echo "::error::No image tag found in $src"
               exit 1
             fi
+            # Exactly one <svc>-<sha> tag, so a second tag: line or another service's tag is never promoted.
+            if ! [[ "$new_tag" =~ ^${svc}-[0-9a-f]{8}$ ]]; then
+              echo "::error::Tag in $src isn't a single ${svc}-<8-char sha> tag: $new_tag"
+              exit 1
+            fi
             if [ "$new_tag" = "$old_tag" ]; then
               echo "$svc: already on $new_tag, skipping"
               continue
             fi
 
             # Never promote a tag the next environment couldn't pull.
-            if ! aws ecr describe-images --repository-name "$REPOSITORY" --image-ids imageTag="$new_tag" >/dev/null 2>&1; then
-              echo "::error::$new_tag is not in ECR, so $TO couldn't pull it"
+            if ! out=$(aws ecr describe-images --repository-name "$REPOSITORY" --image-ids imageTag="$new_tag" 2>&1 >/dev/null); then
+              if grep -q ImageNotFoundException <<<"$out"; then
+                echo "::error::$new_tag is not in ECR, so $TO couldn't pull it"
+              else
+                echo "::error::Couldn't check $new_tag in ECR: $out"
+              fi
               exit 1
             fi
 

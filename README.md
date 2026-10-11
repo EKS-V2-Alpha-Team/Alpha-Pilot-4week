@@ -1,5 +1,3 @@
-<img src="https://api.iconify.design/octicon/stack-16.svg?color=%23808080" width="16" height="16" alt=""> [Architecture](ARCHITECTURE.md) · <img src="https://api.iconify.design/octicon/rocket-16.svg?color=%23808080" width="16" height="16" alt=""> [Releasing](RELEASING.md) · <img src="https://api.iconify.design/octicon/history-16.svg?color=%23808080" width="16" height="16" alt=""> [Changelog](CHANGELOG.md) · <img src="https://api.iconify.design/octicon/law-16.svg?color=%23808080" width="16" height="16" alt=""> [MIT license](#license)
-
 [![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](https://go.dev/) [![Terraform](https://img.shields.io/badge/Terraform-1.16.3-844FBA?logo=terraform&logoColor=white)](https://developer.hashicorp.com/terraform) [![Amazon EKS](https://img.shields.io/badge/Amazon%20EKS-1.35-FF9900)](https://aws.amazon.com/eks/) [![Kubernetes](https://img.shields.io/badge/Kubernetes-1.35-326CE5?logo=kubernetes&logoColor=white)](https://kubernetes.io/) [![Docker](https://img.shields.io/badge/Docker-distroless-2496ED?logo=docker&logoColor=white)](https://www.docker.com/) [![Helm](https://img.shields.io/badge/Helm-4.3.0-0F1689?logo=helm&logoColor=white)](https://helm.sh/) [![Argo CD chart](https://img.shields.io/badge/Argo%20CD%20chart-10.9.6-EF7B4D?logo=argo&logoColor=white)](https://argo-cd.readthedocs.io/) [![Karpenter](https://img.shields.io/badge/Karpenter-1.14-FF9900)](https://karpenter.sh/) [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org/) [![Amazon SQS](https://img.shields.io/badge/Amazon%20SQS-queue-FF4F8B)](https://aws.amazon.com/sqs/) [![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-CI%2FCD-2088FF?logo=githubactions&logoColor=white)](https://github.com/features/actions)
 
 # E-commerce Order Fulfillment Platform
@@ -99,6 +97,7 @@ Full steps, versioning and verification: [RELEASING.md](RELEASING.md). What chan
 Horizontal Pod Autoscaling is enabled for the seven stateless HTTP services using CPU utilisation.
 
 In dev:
+
 - `api-gateway`: 2–3 replicas, keeping two available for PDB and zero-downtime rollout testing.
 - `dashboard-api`, `inventory-service`, `notification-service`, `order-service`, `payment-service` and `shipping-service`: 1–3 replicas.
 - `scheduler` does not use HPA because it runs as a singleton.

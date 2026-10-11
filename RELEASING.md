@@ -9,7 +9,7 @@ A release is a set of image tags promoted to prod, given a version number. Image
 | Who | Does |
 |---|---|
 | Release owner (whoever runs the prod promotion) | Picks the version, runs Promote, updates the CHANGELOG in the promotion PR, syncs prod, checks it, tags it, publishes the GitHub Release, announces it |
-| Reviewer (anyone else in CODEOWNERS) | Approves the prod promotion PR. The release owner can't approve their own |
+| Reviewer (anyone else in CODEOWNERS) | Approves the prod promotion PR. Team rule: the release owner doesn't approve their own. GitHub won't stop them, because the GitHub App opens the PR |
 
 ## Versioning
 
@@ -67,7 +67,7 @@ Keep exact image tags out of anything published outside the repo (GitHub Release
 1. **Promote to staging**: Actions → **Promote**, `from: dev`, `to: staging`, `services: all` (or a list). Review and merge the pull request it opens. Staging deploys on merge.
 2. **Check staging**: Applications `Synced` and `Healthy`, the dashboard works, an order completes.
 3. **Promote to prod**: Actions → **Promote**, `from: staging`, `to: prod`. The workflow refuses any tag that isn't in ECR.
-4. **Update the CHANGELOG in that pull request**: move the items under `Unreleased` into a new `## [vX.Y.Z] - YYYY-MM-DD` section, link the promotion pull request, and add the version's compare link at the bottom of the file.
+4. **Update the CHANGELOG in that pull request**: move the items under `Unreleased` into a new `## [vX.Y.Z] - YYYY-MM-DD` section, link the promotion pull request, and add the version's compare link at the bottom of the file, below the `<!-- -->` comment, not inside it (links inside a comment don't render, so the heading wouldn't be a link).
 5. **Get it approved and merge it.**
 6. **Sync prod**: prod services don't auto-sync. Sync each changed Application in the ArgoCD UI, or:
    ```bash
@@ -110,7 +110,7 @@ Every line should start with `OK`. A `DIFF` means that Application hasn't been s
 
 One service: revert the commit or PR line that changed its tag in `kubernetes/deploy/envs/<env>/<svc>.yaml`, merge, and in prod sync that Application. The previous image is still in ECR, so nothing is rebuilt. For prod, release the rollback as a PATCH version (`vX.Y.Z+1`) with a `Rolled back` entry in the CHANGELOG, so the history matches what's running.
 
-Never use `kubectl rollout undo` or edit a Deployment: ArgoCD's self-heal puts the Git version straight back. The full procedure is the runbook "A bad release reached an environment".
+Never use `kubectl rollout undo` or edit a Deployment: ArgoCD's self-heal puts the Git version straight back.
 
 ## What Promote doesn't cover
 

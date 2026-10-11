@@ -1,0 +1,20 @@
+deployment:
+  replicas: 1
+
+service:
+  type: ClusterIP
+  annotations: null
+  spec: null
+
+ports:
+  web:
+    hostPort: 80
+    http:
+      redirections: null
+
+nodeSelector:
+  ingress-ready: "true"
+tolerations:
+  - key: node-role.kubernetes.io/control-plane
+    operator: Exists
+    effect: NoSchedule

@@ -1,0 +1,18 @@
+# The node image is NOT set here on purpose. It is passed in by kind.mk
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: eks-v2-local
+
+nodes:
+  # Traefik routes ingress traffic from http://localhost:8080 to port 80 on the kind control-plane node.
+  # Port mappings require cluster recreation to change.
+  - role: control-plane
+    labels:
+      ingress-ready: "true"
+    extraPortMappings:
+      - containerPort: 80
+        hostPort: 8080
+        protocol: TCP
+
+  - role: worker
+  - role: worker

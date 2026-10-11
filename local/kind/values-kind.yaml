@@ -1,0 +1,34 @@
+image:
+  repository: order-platform-local
+  pullPolicy: IfNotPresent
+
+database:
+  enabled: false
+
+externalSecrets:
+  env: []
+
+serviceMonitor:
+  enabled: false
+
+ingressRoute:
+  host: localhost
+  entryPoints:
+    - web
+  tls:
+    enabled: false
+
+analysis:
+  enabled: false
+
+env:
+  DATABASE_URL: "postgres://app:localdev@postgres:5432/orders?sslmode=disable" # checkov:skip=CKV_SECRET_4: throwaway local kind credentials, same as docker-compose.yml
+  REDIS_URL: "redis://redis:6379"
+  JWT_SECRET: "local-dev-secret" # checkov:skip=CKV_SECRET_6: throwaway local kind value, same as docker-compose.yml
+
+  # Local SQS endpoint provided by floci.
+  SQS_QUEUE_URL: "http://floci:4566/000000000000/order-events"
+  AWS_ENDPOINT_URL: "http://floci:4566"
+  AWS_REGION: "eu-west-2"
+  AWS_ACCESS_KEY_ID: "test"
+  AWS_SECRET_ACCESS_KEY: "test"

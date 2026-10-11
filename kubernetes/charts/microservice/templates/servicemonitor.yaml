@@ -13,6 +13,8 @@ spec:
   selector:
     matchLabels:
       {{- include "microservice.selectorLabels" . | nindent 6 }}
+  podTargetLabels:
+    - rollouts-pod-template-hash
   endpoints:
     - port: metrics
       path: {{ .Values.serviceMonitor.path }}

@@ -1,6 +1,12 @@
+# singleton is for the scheduler service as we do not want 2 pods of scheduler at once as it can do cronjobs twice so kept as deployment.
 {{- include "microservice.validate" . }}
+{{- if .Values.singleton }}
 apiVersion: apps/v1
 kind: Deployment
+{{- else }}
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+{{- end }}
 metadata:
   name: {{ include "microservice.fullname" . }}
   labels:
@@ -15,14 +21,28 @@ spec:
   {{- end }}
   revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
   progressDeadlineSeconds: {{ .Values.progressDeadlineSeconds }}
+  {{- if not .Values.singleton }}
+  progressDeadlineAbort: true # needs to abort after 5 minutes if no progress
+  {{- end }}
   strategy:
-    {{- if or .Values.singleton (eq .Values.strategy.type "Recreate") }}
+    {{- if .Values.singleton }}
     type: Recreate
     {{- else }}
-    type: RollingUpdate
-    rollingUpdate:
+    canary:
       maxSurge: {{ .Values.strategy.rollingUpdate.maxSurge }}
       maxUnavailable: {{ .Values.strategy.rollingUpdate.maxUnavailable }}
+      steps:
+        - setWeight: 50 # configured 50 and not 20 as we do not have enough replicas to achieve a 20% split
+        {{- if .Values.analysis.enabled }}
+        - analysis:
+            templates:
+              - templateName: {{ include "microservice.fullname" . }}-analysis
+            args:
+              - name: canary-hash
+                valueFrom:
+                  podTemplateHashValue: Latest
+        {{- end }}
+        - setWeight: 100
     {{- end }}
   selector:
     matchLabels:

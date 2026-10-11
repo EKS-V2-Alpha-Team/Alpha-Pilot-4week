@@ -2,4 +2,6 @@
 image:
   tag: payment-service-9dcea27c
 
-replicaCount: 1
+autoscaling:
+  minReplicas: 1
+  maxReplicas: 3

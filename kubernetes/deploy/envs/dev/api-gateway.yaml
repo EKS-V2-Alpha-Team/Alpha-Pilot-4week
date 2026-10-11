@@ -2,8 +2,10 @@
 image:
   tag: api-gateway-9dcea27c
 
-# 2 pods in dev so the PDB and zero-downtime rollouts are actually exercised.
-replicaCount: 2
+# Keep 2 pods minimum so the PDB and zero-downtime rollouts are exercised in dev.
+autoscaling:
+  minReplicas: 2
+  maxReplicas: 3
 
 env:
   # VPC CIDR: Traefik pods get VPC IPs (VPC CNI), so X-Forwarded-For is trusted

@@ -83,6 +83,18 @@ The reasoning and trade-offs behind these choices are in [ARCHITECTURE.md](ARCHI
 
 ---
 
+## Scaling
+
+Horizontal Pod Autoscaling is enabled for the seven stateless HTTP services using CPU utilisation.
+
+In dev:
+- `api-gateway`: 2–3 replicas, keeping two available for PDB and zero-downtime rollout testing.
+- `dashboard-api`, `inventory-service`, `notification-service`, `order-service`, `payment-service` and `shipping-service`: 1–3 replicas.
+- `scheduler` does not use HPA because it runs as a singleton.
+- `worker` does not use CPU-based HPA because SQS queue depth is a better scaling signal.
+
+Karpenter handles node-level scaling when additional pod capacity is required.
+
 ## Directory Structure
 
 ```

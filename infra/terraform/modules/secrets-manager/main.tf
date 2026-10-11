@@ -91,3 +91,12 @@ resource "aws_secretsmanager_secret_version" "db_connection" {
     port = 5432
   })
 }
+
+resource "aws_secretsmanager_secret" "alertmanager_slack_webhook" {
+  count = var.environment == "prod" ? 1 : 0
+
+  name       = "${var.project_name}-${var.environment}-alertmanager-slack-webhook"
+  kms_key_id = aws_kms_key.secret_encryption.arn
+
+  recovery_window_in_days = 30
+}

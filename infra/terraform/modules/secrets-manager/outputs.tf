@@ -37,3 +37,8 @@ output "db_connection_secret_arn" {
   description = "arn  of the db connection secret"
   value       = var.environment == "dev" ? aws_secretsmanager_secret.db_connection[0].arn : null
 }
+
+output "alertmanager_slack_secret_arn" {
+  description = "ARN of the production alertmanager slack webhook secret"
+  value       = var.environment == "prod" ? aws_secretsmanager_secret.alertmanager_slack_webhook[0].arn : null
+}

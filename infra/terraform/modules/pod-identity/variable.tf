@@ -30,6 +30,12 @@ variable "jwt_secret_arn" {
   type        = string
 }
 
+variable "alertmanager_slack_secret_arn" {
+  description = "ARN of the production alertmanager slack webhook secret"
+  type        = string
+  default     = null
+}
+
 variable "kms_key_arn" {
   description = "ARN of the KMS key used to encrypt secrets"
   type        = string

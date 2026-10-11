@@ -2,3 +2,26 @@ grafana:
   grafana.ini:
     server:
       root_url: https://grafana.prod.eksv2.naimaosmann.com
+
+alertmanager:
+  alertmanagerSpec:
+    secrets:
+      - alertmanager-slack-webhook
+
+  config:
+    global:
+      resolve_timeout: 5m
+
+    route:
+      receiver: slack-prod
+      group_by: ['alertname', 'severity']
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 3h
+
+    receivers:
+      - name: slack-prod
+        slack_configs:
+          - channel: '#alerts-prod'
+            api_url_file: /etc/alertmanager/secrets/alertmanager-slack-webhook/webhook-url
+            send_resolved: true

@@ -41,7 +41,8 @@ resource "aws_iam_policy" "secrets_manager_read" {
           var.db_credentials_secret_arn,
           var.db_connection_secret_arn,
           var.grafana_secret_arn,
-          var.jwt_secret_arn
+          var.jwt_secret_arn,
+          var.alertmanager_slack_secret_arn
         ])
       },
       {

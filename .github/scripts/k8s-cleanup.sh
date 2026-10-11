@@ -47,26 +47,35 @@ edns_args() { kubectl -n external-dns get deploy external-dns -o json | jq -r '.
 # TXT ownership records external-dns wrote for this cluster (their A records go with them)
 dns_records() {
   [ -n "${DNS_ZONE_ID:-}" ] || return 0
-  aws route53 list-resource-record-sets --hosted-zone-id "$DNS_ZONE_ID" --output json \
-    | jq -r --arg o "$CLUSTER_NAME" '.ResourceRecordSets[] | select(.Type == "TXT")
-        | select(any(.ResourceRecords[]?.Value; test("external-dns/owner=" + $o + "([,\"]|$)"))) | .Name'
+  local out
+  out=$(aws route53 list-resource-record-sets --hosted-zone-id "$DNS_ZONE_ID" --output json) || return 1
+  jq -r --arg o "$CLUSTER_NAME" '.ResourceRecordSets[] | select(.Type == "TXT")
+        | select(any(.ResourceRecords[]?.Value; test("external-dns/owner=" + $o + "([,\"]|$)"))) | .Name' <<<"$out"
 }
 
 # Everything Kubernetes made in AWS for this cluster. The account is shared by all
 # environments, so each lookup filters on this cluster's tag, VPC or recorded IDs.
+# A failed AWS call must make this return non-zero, because "the call failed" is not the
+# same as "nothing left". Pipes hide the failure, so each result is captured with || return 1.
+aws_ids() {
+  local prefix=$1 out
+  shift
+  out=$(aws "$@" --output text) || return 1
+  ids <<<"$out" | sed "s/^/$prefix /"
+}
 aws_leftovers() {
   local arns id out
-  arns=$(aws elbv2 describe-load-balancers --query 'LoadBalancers[].LoadBalancerArn' --output text)
+  arns=$(aws elbv2 describe-load-balancers --query 'LoadBalancers[].LoadBalancerArn' --output text) || return 1
   if [ -n "$arns" ] && [ "$arns" != None ]; then
-    xargs -n 20 aws elbv2 describe-tags --output json --resource-arns <<<"$arns" \
-      | jq -r --arg c "$CLUSTER_NAME" '.TagDescriptions[]
-          | select(any(.Tags[]; .Key == "elbv2.k8s.aws/cluster" and .Value == $c)) | "load-balancer \(.ResourceArn)"'
+    out=$(xargs -n 20 aws elbv2 describe-tags --output json --resource-arns <<<"$arns") || return 1
+    jq -r --arg c "$CLUSTER_NAME" '.TagDescriptions[]
+          | select(any(.Tags[]; .Key == "elbv2.k8s.aws/cluster" and .Value == $c)) | "load-balancer \(.ResourceArn)"' <<<"$out" || return 1
   fi
-  aws ec2 describe-security-groups --filters "Name=tag:elbv2.k8s.aws/cluster,Values=$CLUSTER_NAME" \
-    --query 'SecurityGroups[].GroupId' --output text | ids | sed 's/^/security-group /'
-  aws ec2 describe-instances --filters "Name=tag:karpenter.sh/nodepool,Values=*" \
+  aws_ids security-group ec2 describe-security-groups --filters "Name=tag:elbv2.k8s.aws/cluster,Values=$CLUSTER_NAME" \
+    --query 'SecurityGroups[].GroupId' || return 1
+  aws_ids karpenter-instance ec2 describe-instances --filters "Name=tag:karpenter.sh/nodepool,Values=*" \
     "Name=tag-key,Values=kubernetes.io/cluster/$CLUSTER_NAME" "Name=instance-state-name,Values=pending,running,stopping,stopped" \
-    --query 'Reservations[].Instances[].InstanceId' --output text | ids | sed 's/^/karpenter-instance /'
+    --query 'Reservations[].Instances[].InstanceId' || return 1
   [ -s "$IDS_DIR/volumes.txt" ] && while read -r id; do
     if out=$(aws ec2 describe-volumes --volume-ids "$id" --query 'Volumes[0].State' --output text 2>&1); then
       [[ $out =~ ^delet ]] || echo "ebs-volume $id ($out)"
@@ -79,14 +88,16 @@ aws_leftovers() {
   done < "$IDS_DIR/snapshots.txt"
   if [ -n "${VPC_ID:-}" ]; then
     # Cluster still up: its nodes' ENIs are in use, so only detached ones count.
-    aws ec2 describe-network-interfaces --filters "Name=vpc-id,Values=$VPC_ID" "Name=status,Values=available" \
-      --query 'NetworkInterfaces[].NetworkInterfaceId' --output text | ids | sed 's/^/detached-eni /'
+    aws_ids detached-eni ec2 describe-network-interfaces --filters "Name=vpc-id,Values=$VPC_ID" "Name=status,Values=available" \
+      --query 'NetworkInterfaces[].NetworkInterfaceId' || return 1
   else
     # Cluster gone: any ENI the VPC CNI tagged for it is a leftover.
-    aws ec2 describe-network-interfaces --filters "Name=tag:cluster.k8s.amazonaws.com/name,Values=$CLUSTER_NAME" \
-      --query 'NetworkInterfaces[].NetworkInterfaceId' --output text | ids | sed 's/^/eni /'
+    aws_ids eni ec2 describe-network-interfaces --filters "Name=tag:cluster.k8s.amazonaws.com/name,Values=$CLUSTER_NAME" \
+      --query 'NetworkInterfaces[].NetworkInterfaceId' || return 1
   fi
-  dns_records | sed 's/^/dns-record /'
+  out=$(dns_records) || return 1
+  [ -z "$out" ] || sed 's/^/dns-record /' <<<"$out"
+  return 0
 }
 
 # --- steps
@@ -259,7 +270,7 @@ teardown() {
 # After the cluster is gone: EBS has no cluster tag, so use the IDs the last successful cleanup recorded.
 fetch_ids() {
   local run
-  for run in $(gh run list -R "$GITHUB_REPOSITORY" --workflow k8s-cleanup.yaml --status success \
+  for run in $(gh run list -R "$GITHUB_REPOSITORY" --workflow k8-cleanup.yaml --status success \
                  --limit 20 --json databaseId --jq '.[].databaseId'); do
     if gh run download "$run" -R "$GITHUB_REPOSITORY" -n "k8s-ids-$ENVIRONMENT" -D "$IDS_DIR" 2>/dev/null; then
       echo "Checking the volume/snapshot IDs recorded by run $run"

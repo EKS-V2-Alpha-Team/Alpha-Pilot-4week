@@ -13,6 +13,8 @@ Cluster tools the apps depend on. Each environment (dev, staging, prod) has its 
 | `helm-values/envs/<env>/`                          | Per-environment overrides: cluster name, VPC tags, ExternalDNS owner ID, public hostname           |
 | `charts/microservice/`                             | Shared chart for the 9 services (see `deploy/README.md`)                                          |
 | `deploy/`                                          | Per-service and per-environment values for that chart                                             |
+| `charts/monitoring/`                               | Our Grafana dashboards, Prometheus alert rules and the Grafana URL (IngressRoute + Certificate), deployed with kube-prometheus-stack |
+
 
 To see what a cluster gets: `helm template kubernetes/platform/apps --set environment=staging`.
 
@@ -31,7 +33,7 @@ To see what a cluster gets: `helm template kubernetes/platform/apps --set enviro
 | ExternalDNS                  | Points the domain at the NLB in Route 53                                                           | -1   |
 | Reloader                     | Restarts pods when a secret rotates                                                                | -1   |
 | Redis (StatefulSet, 1Gi gp3)  | Rate-limit counters for api-gateway, in `order-platform`                                           | -1   |
-| kube-prometheus-stack        | Prometheus, Grafana, Alertmanager                                                                  | -1   |
+| kube-prometheus-stack        | Prometheus, Grafana, Alertmanager, plus `charts/monitoring` (dashboards, alert rules, Grafana URL) | -1   |
 | The 9 services               | `order-platform.yaml` ApplicationSet: one Application per service                                  | 0    |
 
 A wave starts only when the previous one is healthy (health check in `argocd-values.yaml`).
@@ -98,7 +100,8 @@ kubectl get clusterissuer                             # both READY True
 ## Known gaps
 
 - Redis has no password. Only the gateway uses it, for rate-limit counters, and it fails open.
-- Grafana generates its own admin password; the Secrets Manager one isn't wired in yet.
+- Prometheus and Alertmanager have no login, so they aren't exposed. Use Grafana's Explore or kubectl port-forward.
+
 
 ## Tear down
 

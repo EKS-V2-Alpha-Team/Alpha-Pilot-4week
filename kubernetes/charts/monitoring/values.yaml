@@ -1,0 +1,13 @@
+grafana:
+  service:
+    name: prometheus-grafana
+    port: 80
+  ingressRoute:
+    enabled: false
+    host: ""
+    entryPoints:
+      - websecure
+    middlewares: []
+    tls:
+      enabled: true
+      clusterIssuer: ""

@@ -1,0 +1,17 @@
+{{- /* IngressRoute does not support cert-manager's ingress-shim annotations,
+     so the Certificate is created explicitly (same pattern as the microservice chart). */ -}}
+{{- with .Values.grafana.ingressRoute }}
+{{- if and .enabled .tls.enabled }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: grafana
+spec:
+  secretName: grafana-tls
+  dnsNames:
+    - {{ required "grafana.ingressRoute.host is required" .host }}
+  issuerRef:
+    kind: ClusterIssuer
+    name: {{ required "grafana.ingressRoute.tls.clusterIssuer is required" .tls.clusterIssuer }}
+{{- end }}
+{{- end }}

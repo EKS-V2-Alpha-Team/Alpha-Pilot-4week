@@ -1,13 +1,3 @@
-# kind only. Values for the official metrics-server Helm chart
-# (https://kubernetes-sigs.github.io/metrics-server/), installed by
-# `make kind-platform`. Chart version is pinned in kind.mk.
-#
-# metrics-server measures pod/node CPU and memory: it powers `kubectl top`
-# and is what an HPA reads to decide when to scale. EKS provides it as an
-# add-on; kind doesn't ship it.
-
 args:
-  # kind's kubelets use self-signed certificates that metrics-server can't
-  # verify, so without this it never becomes Ready.
-  # Local clusters only: never use this flag on a real cluster.
+
   - --kubelet-insecure-tls

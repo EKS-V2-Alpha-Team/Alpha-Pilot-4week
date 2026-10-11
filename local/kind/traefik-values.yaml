@@ -1,29 +1,17 @@
-# kind overlay for Traefik. Applied AFTER kubernetes/helm-values/traefik-values.yaml
-# (the EKS values), so only what can't work on a laptop is changed here.
-# `null` removes a key that the EKS values set.
-
 deployment:
-  # EKS runs 2. In kind Traefik binds the node's port 80 (hostPort), and only
-  # one pod can hold a host port, so the second pod would stay Pending.
   replicas: 1
 
 service:
-  # EKS: an AWS NLB (loadBalancerClass + annotations). kind has no AWS load
-  # balancer; traffic arrives through the node's port 80 instead.
   type: ClusterIP
   annotations: null
   spec: null
 
 ports:
   web:
-    # Node port 80 -> Traefik's web entry point. kind-config.yaml maps node
-    # port 80 to localhost:8080 on your machine.
     hostPort: 80
     http:
-      # EKS redirects http -> https. No TLS locally, so serve plain HTTP.
       redirections: null
 
-# Run on the control-plane node, the one with the port mapping.
 nodeSelector:
   ingress-ready: "true"
 tolerations:

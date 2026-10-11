@@ -11,7 +11,7 @@ overlay), and runs the real startup, liveness and readiness probes.
 Needs Docker (give it at least 4 CPUs and 8 GB RAM), kind, kubectl and helm. Run from the repo root.
 
 ```bash
-make kind-all        # up → platform → build → load → deploy → test
+make kind-all        # up → platform → build → load → deploy
 make kind-help       # list targets and current settings
 make kind-down       # delete the cluster (keeps images); kind-clean also removes images
 ```
@@ -31,8 +31,8 @@ Also runs without the root Makefile: `make -f local/kind/kind.mk <target>`.
 | `kind-build` / `kind-load` | Build images from `services/<svc>` / copy them into the cluster |
 | `kind-deploy` | Install `SERVICES` with `ENV` values into `order-platform` |
 | `kind-render` | Render every service for every env; fail if anything AWS-only leaks in. No cluster needed |
-| `kind-test` / `kind-status` | Smoke test the Deployments / show nodes, releases, pods |
-| `kind-all` | up → platform → build → load → deploy → test |
+| `kind-status` | Show nodes, releases, pods |
+| `kind-all` | up → platform → build → load → deploy |
 
 Variables: `SERVICES="order-service worker"` (default: all 9), `ENV=staging`
 (default `dev`; must exist in `kubernetes/deploy/envs/`).
@@ -63,6 +63,7 @@ Only what can't exist on a laptop is replaced:
 | Traefik behind an AWS NLB, 2 replicas, HTTPS | 1 replica on node port 80 → `localhost:8080`, plain HTTP |
 | IngressRoute on `dashboard.dev...` with Let's Encrypt TLS | Host `localhost`, `web` entry point, no TLS |
 | Secret `postgres-credentials` | Created by `kind-platform` with throwaway local credentials |
+| Postgres daily snapshots (SnapScheduler + EBS) | Skipped (`KIND_PLATFORM_SKIP` in `kind.mk`) |
 | ServiceMonitor, Certificate | Switched off |
 
 **Not tested in kind:** RDS, Pod Identity/IAM, Secrets Manager, ECR pulls, real
@@ -72,31 +73,31 @@ throwaway; never reuse them.
 
 ## Check an order end to end
 
-Place an order in the UI and move it through processing to shipping, then:
+Submit an order through the application and follow its processing through the relevant services to shipping.
+
+### Inspect recent logs
 
 ```bash
 for d in order-service worker payment-service shipping-service notification-service; do
-  echo "== $d"; kubectl logs deploy/$d -n order-platform --since=10m --tail=10; done
-
-for q in order-events order-events-dlq; do
-  kubectl exec deploy/floci -n order-platform -- aws sqs get-queue-attributes \
-    --queue-url http://floci:4566/000000000000/$q --attribute-names ApproximateNumberOfMessages; done
+  echo "== $d"
+  kubectl logs "deploy/$d" -n order-platform --since=10m --tail=10
+done
 ```
 
-Expect events in each service's logs and both queues at 0. DLQ above 0 means a
-message failed 3 times.
+### Check local SQS queue depths
 
-## Troubleshooting
+```bash
+for q in order-events order-events-dlq; do
+  echo "== $q"
+  kubectl exec deploy/floci -n order-platform -- \
+    aws sqs get-queue-attributes \
+      --queue-url "http://floci:4566/000000000000/$q" \
+      --attribute-names ApproximateNumberOfMessages
+done
+```
 
-| Symptom | Fix |
-|---|---|
-| `ImagePullBackOff` | `make kind-build kind-load SERVICES="<svc>"` |
-| `localhost:8080` doesn't respond | `kubectl get pods -n traefik`, then `kubectl get ingressroute -n order-platform` |
-| `Refusing: current context is ...` | `kubectl config use-context kind-eks-v2-local` (safety guard: kind targets never touch other clusters) |
-| `CrashLoopBackOff` | `kubectl logs <pod> -n order-platform --previous` |
-| Pods `Pending` | Give Docker more CPU/RAM, or deploy fewer `SERVICES` |
-| Anything odd | `make kind-down && make kind-all`; the cluster is disposable |
+### Verify the result
 
-The node image in `kind.mk` must match the EKS minor version
-(`infra/terraform/modules/eks/main.tf`). Update it with its `@sha256` digest from
-the [kind releases](https://github.com/kubernetes-sigs/kind/releases) when EKS is upgraded.
+Confirm that the order reaches its expected final state and that the relevant service logs show successful processing.
+
+Queue depths may return to zero after messages have been consumed. A non-zero dead-letter queue depth warrants investigation; messages are configured to move to the dead-letter queue after repeated unsuccessful receives, according to the local queue policy.

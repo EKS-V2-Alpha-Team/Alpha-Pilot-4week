@@ -1,7 +1,3 @@
-# kind only. The live Postgres and Redis StatefulSets ask for storageClassName: gp3
-# (an EKS/EBS class). kind has no EBS, so this creates a class with the SAME NAME
-# backed by kind's built-in local-path provisioner. The live manifests apply
-# unchanged; their volumes just land on the kind node's disk instead of EBS.
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:

@@ -449,7 +449,7 @@ The platform runs three environments from the same code:
 | `bootstrap/`                      | One-off Terraform: state bucket, ECR, GitHub OIDC role, hosted zone                                                    |
 | `infra/terraform/`                | The platform's AWS infrastructure, one module per area (`vpc`, `eks`, `pod-identity`, `secrets-manager`, `sqs`, `rds`) |
 | `infra/argocd-bootstrap/`         | Installs ArgoCD and the root Application                                                                               |
-| `infra/kind/`                     | Config for a local kind cluster                                                                                        |
+| `local/kind/`                     | Config for a local kind cluster                                                                                        |
 | `kubernetes/charts/microservice/` | The shared Helm chart for every service                                                                                |
 | `kubernetes/deploy/`              | Values for each service and each environment                                                                           |
 | `kubernetes/platform/`            | The root App-of-Apps, the platform Applications and cluster-wide manifests                                             |

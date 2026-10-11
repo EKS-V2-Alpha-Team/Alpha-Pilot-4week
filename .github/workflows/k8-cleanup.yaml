@@ -1,0 +1,122 @@
+name: K8s Cleanup
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment"
+        required: true
+        type: choice
+        options: [dev, staging, prod]
+
+permissions:
+  id-token: write
+  contents: read
+  actions: read
+  issues: write
+
+env:
+  ENVIRONMENT: ${{ inputs.environment }}
+  CLUSTER_NAME: eks-v2-${{ inputs.environment }}-cluster
+  SCRIPT: .github/scripts/k8s-cleanup.sh
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    concurrency: k8s-cleanup-${{ inputs.environment }}
+    outputs:
+      cluster_exists: ${{ steps.cluster.outputs.exists }}
+
+    steps:
+      - name: Wait for prod approval
+        if: inputs.environment == 'prod'
+        uses: trstringer/manual-approval@v1
+        with:
+          secret: ${{ github.token }}
+          approvers: ${{ vars.PROD_APPROVERS }}
+          minimum-approvals: 1
+          exclude-workflow-initiator-as-approver: true
+
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: Configure AWS credentials w/ OIDC
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Check the cluster
+        id: cluster
+        run: bash "$SCRIPT" check
+
+      - name: Preflight checks
+        if: env.CLUSTER_EXISTS == 'true'
+        run: bash "$SCRIPT" preflight
+
+      - name: Upload the recorded IDs
+        if: env.CLUSTER_EXISTS == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: k8s-ids-${{ inputs.environment }}
+          path: |
+            ${{ runner.temp }}/volumes.txt
+            ${{ runner.temp }}/snapshots.txt
+          overwrite: true
+
+      - name: Delete what Kubernetes created in AWS
+        if: env.CLUSTER_EXISTS == 'true'
+        run: bash "$SCRIPT" teardown
+
+      - name: Download the recorded IDs
+        if: env.CLUSTER_EXISTS != 'true'
+        run: bash "$SCRIPT" fetch_ids
+
+      - name: Check AWS for leftovers
+        run: bash "$SCRIPT" leftovers
+
+      - name: Diagnostics
+        if: failure() && env.CLUSTER_EXISTS == 'true'
+        run: bash "$SCRIPT" diagnostics
+
+  argocd-bootstrap:
+    needs: cleanup
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    concurrency: argocd-bootstrap-${{ inputs.environment }}
+    defaults:
+      run:
+        working-directory: ./infra/argocd-bootstrap
+    env:
+      TF_VAR_environment: ${{ inputs.environment }}
+      CLUSTER_EXISTS: ${{ needs.cleanup.outputs.cluster_exists }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: Configure AWS credentials w/ OIDC
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.16.3"
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        run: terraform init -input=false -backend-config="backend/${ENVIRONMENT}.hcl"
+
+      - name: Terraform Destroy
+        run: |
+          state=$(terraform state list)
+          [ -n "$state" ] || { echo "Nothing to destroy"; exit 0; }
+          [ "$CLUSTER_EXISTS" = true ] || { echo "::error::Cluster is gone but state still has: $state"; exit 1; }
+          terraform plan -destroy -input=false -out=destroy.tfplan
+          terraform show -no-color destroy.tfplan >> "$GITHUB_STEP_SUMMARY"
+          terraform apply -input=false destroy.tfplan

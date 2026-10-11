@@ -2,7 +2,9 @@
 image:
   tag: inventory-service-0aedbc78
 
-replicaCount: 1
+autoscaling:
+  minReplicas: 3
+  maxReplicas: 7
 
 env:
   SEED_DEMO_PRODUCTS: "false"

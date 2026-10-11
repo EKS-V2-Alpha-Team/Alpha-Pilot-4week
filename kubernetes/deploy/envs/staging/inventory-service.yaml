@@ -2,9 +2,10 @@
 image:
   tag: inventory-service-0aedbc78
 
-replicaCount: 1
+autoscaling:
+  minReplicas: 3
+  maxReplicas: 5
 
 env:
   # Enable demo catalogue data for staging testing.
   SEED_DEMO_PRODUCTS: "true"
-

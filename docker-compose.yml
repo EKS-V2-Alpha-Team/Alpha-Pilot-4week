@@ -17,7 +17,7 @@ x-service-urls: &service-urls
 
 services:
   postgres:
-    image: postgres:16
+    image: postgres:18
     environment:
       POSTGRES_DB: orders
       POSTGRES_USER: app
@@ -28,7 +28,7 @@ services:
       - pgdata:/var/lib/postgresql/data
 
   redis:
-    image: redis:7-alpine
+    image: redis:8-alpine
     ports:
       - "6379:6379"
 

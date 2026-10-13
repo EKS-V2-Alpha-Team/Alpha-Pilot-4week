@@ -32,20 +32,20 @@ The nine [services](services/) run on an Amazon EKS cluster. Terraform provision
 
 ![Architecture diagram](images/architecture.png)
 
-1. **Network**: a VPC across three availability zones in `eu-west-2`. The cluster nodes and the database run in private subnets, and only the load balancer is public.
+1. **Network**: a VPC across three availability zones in `eu-west-2`, with public, private and database subnets. Only the load balancer and the NAT gateway are public. The cluster nodes run in the private subnets, and S3 traffic leaves them through a gateway endpoint instead of the NAT gateway. The database subnets have no internet route and hold RDS in staging and prod.
 2. **Edge**: traffic enters through AWS and is routed into the cluster.
    - **DNS**: Route 53 resolves the domain, and ExternalDNS keeps the record pointed at the load balancer.
-   - **Load balancing**: an AWS Network Load Balancer passes traffic to Traefik, the ingress controller.
+   - **Load balancing**: an AWS Network Load Balancer, created by the AWS Load Balancer Controller, passes traffic to Traefik, the ingress controller.
    - **TLS**: cert-manager issues and renews the certificate from Let's Encrypt.
 3. **Services**: the nine Go services run in the `order-platform` namespace.
    - **Synchronous**: the API gateway is the single entry point and routes HTTP requests to each service.
    - **Asynchronous**: orders are processed through an Amazon SQS queue, with failed messages moved to a dead-letter queue.
-   - **Data**: PostgreSQL stores orders, inventory and payments.
+   - **Data**: PostgreSQL stores orders, inventory and payments. It runs in the cluster in dev and on Amazon RDS in staging and prod (Multi-AZ in prod). Redis runs in the cluster and holds the API gateway's rate-limit counters.
 4. **Platform**: shared tools that run alongside the services.
-   - **Delivery**: ArgoCD deploys everything from Git.
+   - **Delivery**: ArgoCD deploys everything from Git, and Argo Rollouts releases each service as a canary checked against Prometheus.
    - **Scaling**: Karpenter adds and removes nodes based on demand.
-   - **Secrets**: External Secrets pulls credentials from AWS Secrets Manager.
-   - **Monitoring**: Prometheus and Grafana collect and display metrics.
+   - **Secrets**: External Secrets pulls credentials from AWS Secrets Manager, encrypted with a customer-managed KMS key.
+   - **Monitoring**: Prometheus and Grafana collect and display metrics, and Alertmanager sends prod alerts to Slack.
 
 The reasoning and trade-offs behind these choices are in [ARCHITECTURE.md](ARCHITECTURE.md).
 
@@ -79,7 +79,7 @@ The reasoning and trade-offs behind these choices are in [ARCHITECTURE.md](ARCHI
    - **Terraform**: `fmt`, `validate`, a Checkov security scan and a `terraform plan` for dev, staging and prod, each posted as a comment on the pull request. Pull requests use a read-only AWS role, so they can't change anything.
 3. **Provision infrastructure**: Terraform Apply is started manually for one environment and applies a saved plan. Staging and prod only accept a plan made by a manual Terraform Plan run on `main`, and prod waits for an approval from someone who didn't start the run. Pipelines sign in to AWS through GitHub OIDC with a role per environment, so no AWS keys are stored.
 4. **Release images**: on merge to `main`, each changed service's image is pushed to ECR, tagged with the commit SHA. The pipeline then commits the new tag to the dev values file in Git.
-5. **Deploy with GitOps**: ArgoCD sees the new tag in Git and rolls it out with a rolling update. No pipeline deploys to the cluster directly, and a rollback is a revert of the tag commit.
+5. **Deploy with GitOps**: ArgoCD sees the new tag in Git and Argo Rollouts releases it as a canary: half the pods first, then the rest once Prometheus shows a low error rate and latency. No pipeline deploys to the cluster directly, and a rollback is a revert of the tag commit.
 6. **Tear down**: Terraform Destroy asks for the environment and for its name typed again. Prod also waits for an approval, and its database has deletion protection on, so turn that off with an apply first.
 
 ---

@@ -47,9 +47,9 @@ The platform runs in `eu-west-2`, in one AWS account. Dev, staging and prod are 
 | -------- | ------------------------------- | --------------------------------------- |
 | Public   | NLB, NAT gateway                | In and out through the internet gateway |
 | Private  | EKS nodes and every pod         | Out only, through the NAT gateway       |
-| Database | RDS in production, empty in dev and staging | None. No route to the internet at all   |
+| Database | RDS in staging and prod, empty in dev | None. No route to the internet at all   |
 
-Traffic comes in through Route 53, the NLB and Traefik, and reaches the API gateway, which is the only service exposed outside the cluster. Services call each other over HTTP inside the cluster. Order processing runs asynchronously through an SQS queue with a dead-letter queue. The [Request Flow](README.md#request-flow) and [Deployment Process](README.md#deployment-process) sections of the README walk through both paths step by step.
+Traffic comes in through Route 53, the NLB and Traefik, and reaches the API gateway, which is the only service exposed outside the cluster. The AWS Load Balancer Controller creates the NLB from Traefik's Service, and ExternalDNS points the Route 53 record at it. Services call each other over HTTP inside the cluster. Order processing runs asynchronously through an SQS queue with a dead-letter queue. S3 traffic from the private subnets goes through a gateway endpoint instead of the NAT gateway. The [Request Flow](README.md#request-flow) and [Deployment Process](README.md#deployment-process) sections of the README walk through both paths step by step.
 
 ---
 
@@ -59,17 +59,19 @@ Traffic comes in through Route 53, the NLB and Traefik, and reaches the API gate
 
 | Namespace          | Runs                                                                             | Installed by                                       |
 | ------------------ | -------------------------------------------------------------------------------- | -------------------------------------------------- |
-| `order-platform`   | The nine services, Redis, and Postgres in dev and staging                        | ArgoCD ApplicationSet, one Application per service |
+| `order-platform`   | The nine services, Redis, and Postgres in dev                                    | ArgoCD ApplicationSet, one Application per service |
 | `argocd`           | ArgoCD                                                                           | Terraform (`infra/argocd-bootstrap`)               |
 | `traefik`          | Traefik, two replicas on different nodes                                         | ArgoCD                                             |
 | `kube-system`      | Karpenter, AWS Load Balancer Controller, metrics-server, EBS CSI driver, CoreDNS | ArgoCD and EKS add-ons                             |
 | `external-secrets` | External Secrets Operator                                                        | ArgoCD                                             |
 | `cert-manager`     | cert-manager and the Let's Encrypt issuers                                       | ArgoCD                                             |
 | `external-dns`     | ExternalDNS                                                                      | ArgoCD                                             |
-| `monitoring`       | Prometheus, Grafana                                                              | ArgoCD                                             |
+| `monitoring`       | Prometheus, Alertmanager, Grafana                                                | ArgoCD                                             |
+| `argo-rollouts`    | Argo Rollouts controller, which runs the services' canary releases               | ArgoCD                                             |
 | `reloader`         | Stakater Reloader                                                                | ArgoCD                                             |
+| `snapscheduler`    | SnapScheduler, which takes the daily Postgres volume snapshot in dev             | ArgoCD                                             |
 
-ArgoCD installs the platform tools in sync waves before the services, because the services depend on them: Traefik routes their traffic, External Secrets creates their Secrets, and cert-manager issues their certificate.
+ArgoCD installs the platform tools in sync waves before the services, because the services depend on them: Traefik routes their traffic, External Secrets creates their Secrets, cert-manager issues their certificate and Argo Rollouts runs their releases.
 
 ---
 
@@ -77,19 +79,19 @@ ArgoCD installs the platform tools in sync waves before the services, because th
 
 Each decision lists the context, what we chose and what it costs us.
 
-### 1. Postgres on a StatefulSet in dev and staging, RDS in production
+### 1. Postgres on a StatefulSet in dev, RDS in staging and production
 
 **Context**: Postgres holds the only durable business data. The brief requires it to run in the cluster on a StatefulSet with a 20Gi encrypted gp3 volume, and grades a volume snapshot that has actually been restored. Production needs automated backups, failover and patching that we don't want to run ourselves.
 
-**Decision**: dev and staging run Postgres on a single-replica StatefulSet with a 20Gi encrypted gp3 volume. Production runs on Amazon RDS, from `infra/terraform/modules/rds`. The services can't tell the difference: each one builds its `DATABASE_URL` from the same two secrets, which point at either the StatefulSet or RDS.
+**Decision**: dev runs Postgres on a single-replica StatefulSet with a 20Gi encrypted gp3 volume. Staging and production run on Amazon RDS, from `infra/terraform/modules/rds`: staging on a single-AZ `db.t4g.medium`, production on a Multi-AZ `db.m7g.large`. The services can't tell the difference: each one builds its `DATABASE_URL` from the same two secrets, which point at either the StatefulSet or RDS.
 
-**Why a StatefulSet in dev and staging**:
+**Why a StatefulSet in dev**:
 
 - It meets the brief, and it makes us solve the hard problems ourselves: volumes tied to one AZ, snapshots, restores and what happens when the pod dies.
 - It is cheaper for environments that are rebuilt often. The volume costs a few dollars a month, and the database shares nodes we already pay for.
 - Postgres is reached the same way as Redis, through a cluster DNS name, so the services need no network path out of the cluster.
 
-**Why RDS for production**:
+**Why RDS for staging and production**:
 
 |                       | StatefulSet                                                      | RDS                                                           |
 | --------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------- |
@@ -100,11 +102,11 @@ Each decision lists the context, what we chose and what it costs us.
 
 The RDS module already enforces production settings: Terraform refuses to apply in `prod` without Multi-AZ, deletion protection, a final snapshot, at least seven days of backups and a non-burstable instance class.
 
-**Trade-off**: in dev and staging, a single Postgres pod is a single point of failure. If its node or AZ goes down, the platform can't write orders until Postgres is back. We accept that outside production. Production runs on RDS with Multi-AZ, so it fails over to a standby in another AZ.
+**Trade-off**: in dev, a single Postgres pod is a single point of failure. If its node or AZ goes down, the platform can't write orders until Postgres is back. Staging's RDS instance is single-AZ to save cost, so an AZ failure stops writes there too. We accept both outside production. Production runs on RDS with Multi-AZ, so it fails over to a standby in another AZ.
 
 ### 2. Helm over Kustomize
 
-**Context**: nine services with almost identical Kubernetes needs: a Deployment, Service, ExternalSecret, PodDisruptionBudget and optionally an HPA, ServiceMonitor and IngressRoute. They differ in a handful of values.
+**Context**: nine services with almost identical Kubernetes needs: a Rollout (a Deployment for the scheduler), Service, ExternalSecret, PodDisruptionBudget and optionally an HPA, ServiceMonitor and IngressRoute. They differ in a handful of values.
 
 **Decision**: one Helm chart, `kubernetes/charts/microservice`, used by every service. Values are layered from general to specific:
 
@@ -239,7 +241,7 @@ No secret is in Git, in an image or in an env file.
 
 1. The new value is written to Secrets Manager. For the database password, Terraform writes it to the secret and to the database in the same apply, by increasing the version number on the secret.
 2. External Secrets picks up the change within its 15-minute refresh interval and updates the Kubernetes Secret.
-3. Reloader sees the Secret change and restarts only the Deployments that use it, one pod at a time, with the same zero-downtime rolling update as a release.
+3. Reloader sees the Secret change and restarts only the Rollouts and Deployments that use it, one pod at a time, with the same zero-downtime pod replacement as a release.
 
 **Do all nine services restart?** No. Only the services that use the changed secret restart. A JWT rotation restarts api-gateway only. A database password rotation restarts the seven services that use the database. The worker and api-gateway are not affected.
 
@@ -251,7 +253,7 @@ No secret is in Git, in an image or in an env file.
 
 ### How the volumes are backed
 
-In dev and staging, Postgres and Redis each run as a StatefulSet with a volume created from a `volumeClaimTemplate`. In production, Redis runs the same way and Postgres runs on RDS (see [Production database](#production-database)). The AWS EBS CSI driver, installed as an EKS add-on with its own Pod Identity role, creates each volume as an EBS disk.
+In dev, Postgres and Redis each run as a StatefulSet with a volume created from a `volumeClaimTemplate`. In staging and production, Redis runs the same way and Postgres runs on RDS (see [Staging and production database](#staging-and-production-database)). The AWS EBS CSI driver, installed as an EKS add-on with its own Pod Identity role, creates each volume as an EBS disk.
 
 |             | Postgres                | Redis                  |
 | ----------- | ----------------------- | ---------------------- |
@@ -267,7 +269,7 @@ The `gp3` StorageClass is the cluster default. It encrypts every volume, and use
 | ----------------------------- | ----------------------------------------------------------------- |
 | EBS volumes (Postgres, Redis) | KMS, through the `gp3` StorageClass                               |
 | EBS snapshots                 | Inherit the volume's encryption                                   |
-| RDS storage and backups (prod) | Customer-managed KMS key, shared with Secrets Manager            |
+| RDS storage and backups (staging, prod) | Customer-managed KMS key, shared with Secrets Manager  |
 | Kubernetes Secrets in etcd    | Customer-managed KMS key, rotated yearly                          |
 | Secrets Manager               | Customer-managed KMS key, rotated yearly                          |
 | SQS messages                  | SQS-managed encryption                                            |
@@ -279,6 +281,8 @@ The `gp3` StorageClass is the cluster default. It encrypts every volume, and use
 The snapshot-controller EKS add-on adds the VolumeSnapshot resources to the cluster, and a `VolumeSnapshotClass` tells the EBS CSI driver to take them. The class uses `deletionPolicy: Retain`, so deleting the Kubernetes object never deletes the EBS snapshot underneath it.
 
 A snapshot is an incremental, point-in-time copy of the EBS volume, stored by AWS across the whole region. It is crash-consistent: it captures the disk as if the power had been cut, which Postgres recovers from on start-up by replaying its write-ahead log.
+
+In dev, SnapScheduler snapshots the Postgres volume every night at 01:00 UTC and keeps the last seven (`kubernetes/platform/postgres/snapshot-schedule.yaml`).
 
 ### Restore procedure
 
@@ -300,7 +304,7 @@ The restore test proves the data comes back, not just that the commands run:
 
 ### When an AZ goes down
 
-In dev and staging, an EBS volume exists in one AZ only, and Kubernetes pins the PVC to it. A Postgres pod can be moved to another node in the same AZ, but never to another AZ.
+An EBS volume exists in one AZ only, and Kubernetes pins the PVC to it. In dev, a Postgres pod can be moved to another node in the same AZ, but never to another AZ.
 
 - **Pod or node failure**: the StatefulSet recreates the pod, and it reattaches the same volume. No data is lost.
 - **AZ failure**: the pod stays `Pending`, because no node in another AZ can attach the volume. Orders can't be written until the AZ comes back.
@@ -308,16 +312,17 @@ In dev and staging, an EBS volume exists in one AZ only, and Kubernetes pins the
 
 This is why production runs on RDS Multi-AZ. The stateless services already survive an AZ failure, because their pods are spread across AZs and nodes.
 
-### Production database
+### Staging and production database
 
-| | RDS in production |
-|---|---|
-| Storage | gp3, starting at 50 GiB and growing automatically up to 200 GiB |
-| Encryption | Customer-managed KMS key, for the storage and every backup |
-| Availability | Multi-AZ: a synchronous standby in a second AZ takes over automatically |
-| Backups | Automated daily backups kept for 14 days, with restore to any second in that window |
-| Deletion | Deletion protection on, and a final snapshot taken if the instance is ever deleted |
-| Network | Database subnets with no internet route. Only the EKS cluster's security group can reach port 5432 |
+| | Staging | Production |
+|---|---|---|
+| Instance | `db.t4g.medium` | `db.m7g.large` |
+| Storage | gp3, starting at 50 GiB and growing automatically up to 200 GiB | Same |
+| Encryption | Customer-managed KMS key, for the storage and every backup | Same |
+| Availability | Single-AZ | Multi-AZ: a synchronous standby in a second AZ takes over automatically |
+| Backups | Automated daily backups kept for 3 days | Automated daily backups kept for 14 days, with restore to any second in that window |
+| Deletion | No deletion protection and no final snapshot, so it can be torn down freely | Deletion protection on, and a final snapshot taken if the instance is ever deleted |
+| Network | Database subnets with no internet route. Only the EKS cluster's security group can reach port 5432 | Same |
 
 Terraform refuses to apply in `prod` unless Multi-AZ, deletion protection, the final snapshot and at least seven days of backups are all set.
 
@@ -388,7 +393,9 @@ At no point does a running pod see a table it doesn't understand, so there is no
 
 ## Deployments and Rollback
 
-**Zero-downtime rollouts**: every Deployment uses a rolling update with `maxUnavailable: 0` and `maxSurge: 1`. A new pod only receives traffic once its readiness probe passes, and an old pod waits 10 seconds before shutting down so in-flight requests can finish. PodDisruptionBudgets and topology spread constraints keep pods spread across nodes and AZs during node drains and Karpenter consolidation.
+**Canary releases**: every service except the scheduler runs as an Argo Rollouts `Rollout` instead of a Deployment. A release moves half the pods to the new version, then runs an analysis against Prometheus for two minutes: the new pods' 5xx error rate must stay at or below 5% and their P95 latency at or below 500ms. If both checks pass, the rest of the pods move over. If either fails, Argo Rollouts aborts and scales the new version back down, so the old pods keep serving. There is no traffic router, so the split follows the number of pods, which is why the first step is 50% and not a smaller share. The scheduler stays a Deployment with the `Recreate` strategy, because two copies must never run at once.
+
+**Zero-downtime rollouts**: pods are replaced with `maxUnavailable: 0` and `maxSurge: 1`. A new pod only receives traffic once its readiness probe passes, and an old pod waits 10 seconds before shutting down so in-flight requests can finish. PodDisruptionBudgets and topology spread constraints keep pods spread across nodes and AZs during node drains and Karpenter consolidation.
 
 **Failed rollouts**: if a new pod never becomes ready, the rollout stops after 5 minutes and the old pods keep serving traffic. ArgoCD shows the Application as degraded.
 
@@ -407,7 +414,7 @@ The message isn't deleted, so SQS hands it out again after the 60-second visibil
 New orders are still accepted, because placing an order doesn't call payment-service. The worker's charge calls fail, so the messages go back to the queue and are retried. Most are processed once payment-service returns. A message that fails three times moves to the dead-letter queue. The stock stays reserved for 15 minutes before the scheduler releases it.
 
 **A bad image is pushed for notification-service.**
-The new pods fail their readiness probe, so the old pods keep serving and no traffic is lost. Reverting the tag commit rolls back that one service. ArgoCD helps here: each service is its own Application, and Git shows exactly which commit to revert.
+The new pods fail their readiness probe, or the canary analysis catches their errors, so the old pods keep serving and the release is aborted. Reverting the tag commit rolls back that one service. ArgoCD helps here: each service is its own Application, and Git shows exactly which commit to revert.
 
 **The Postgres pod is deleted.**
 The StatefulSet recreates it with the same name and the same volume. Services lose their database connections for a few seconds, then reconnect.
@@ -430,7 +437,8 @@ The platform runs three environments from the same code:
 | VPC CIDR          | `10.6.0.0/16`                         | `10.7.0.0/16`                             | `10.8.0.0/16`                          |
 | Hostname          | `dashboard.dev.eksv2.naimaosmann.com` | `dashboard.staging.eksv2.naimaosmann.com` | `dashboard.prod.eksv2.naimaosmann.com` |
 | ArgoCD sync       | Automatic                             | Automatic                                 | Manual                                 |
-| Terraform         | `envs/dev.tfvars`                     | `envs/staging.tfvars`                     | `envs/prod.tfvars`                     |
+| Postgres          | StatefulSet in the cluster            | RDS, single-AZ                            | RDS, Multi-AZ                          |
+| Terraform         | `infra/terraform/environments/dev/`   | `infra/terraform/environments/staging/`   | `infra/terraform/environments/prod/`   |
 | Kubernetes values | `kubernetes/deploy/envs/dev/`         | `kubernetes/deploy/envs/staging/`         | `kubernetes/deploy/envs/prod/`         |
 
 **Why one account**: a separate prod account needs cross-account access for the shared ECR repository, the Route 53 zone, Secrets Manager and the Terraform state, which didn't fit the time we had. Prod is kept apart inside the account instead. Each environment has its own Terraform state, GitHub Environment and IAM role. The prod role only trusts jobs running as the `prod` GitHub Environment, which only deploys from `main`, and every prod apply or destroy waits for an approval from someone other than the person who started it.

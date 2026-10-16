@@ -4,9 +4,23 @@
     {
       "Effect": "Allow",
       "Action": [
-        "s3:*", "ecr:*", "eks:*", "ec2:*", "iam:*", "sqs:*", "events:*",
-        "ssm:*", "secretsmanager:*", "kms:*", "rds:*", "route53:*",
-        "cloudwatch:*", "logs:*", "sts:*"
+        "s3:*",
+        "ecr:*",
+        "eks:*",
+        "ec2:*",
+        "iam:*",
+        "sqs:*",
+        "events:*",
+        "ssm:*",
+        "secretsmanager:*",
+        "kms:*",
+        "rds:*",
+        "route53:*",
+        "cloudwatch:*",
+        "logs:*",
+        "sts:*",
+        "elasticloadbalancing:DescribeLoadBalancers",
+        "elasticloadbalancing:DescribeTags"
       ],
       "Resource": "*"
     }

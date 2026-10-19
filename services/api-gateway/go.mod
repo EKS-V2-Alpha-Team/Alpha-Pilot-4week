@@ -3,7 +3,7 @@ module github.com/CoderCo-Learning/ecs-v3/services/api-gateway
 go 1.25.0
 
 require (
-	github.com/go-redis/redis/v8 v8.11.5
+	github.com/go-redis/redis/v9 v9.23.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/prometheus/client_golang v1.24.1
 )
